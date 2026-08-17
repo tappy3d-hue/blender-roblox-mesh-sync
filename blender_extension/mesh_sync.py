@@ -45,6 +45,7 @@ DOCUMENT_MODEL_NAME_KEY = "rbx_mesh_document_model_name"
 DOCUMENT_ROOT_KIND_KEY = "rbx_mesh_document_root_kind"
 MATERIAL_VARIANT_KEY = "rbx_mesh_material_variant"
 APPEARANCE_METADATA_KEY = "rbx_mesh_appearance_metadata"
+APPEARANCE_AVAILABLE_KEY = "rbx_mesh_appearance_available"
 
 # Blender can produce different generated UV values when the same Mesh data is
 # evaluated independently through equivalent Bevel modifiers. Reusing one
@@ -683,6 +684,7 @@ def build_selection_document(context):
             "meshHash": item["meshHash"],
             "meshGroupId": mesh_group_ids[item["meshHash"]],
             "appearanceHash": item["appearanceHash"],
+            "appearanceAvailable": obj.get(APPEARANCE_AVAILABLE_KEY, True) is not False,
             "size": item["size"],
             "cframe": item["cframe"],
             "collisionFidelity": object_settings.collision_fidelity,
@@ -719,6 +721,7 @@ def build_selection_document(context):
                 "material": record["material"],
                 "color": record["color"],
                 "transparency": record["transparency"],
+                "appearanceAvailable": obj.get(APPEARANCE_AVAILABLE_KEY, True) is not False,
                 "anchored": record["anchored"],
                 "canCollide": record["canCollide"],
                 "canTouch": record["canTouch"],

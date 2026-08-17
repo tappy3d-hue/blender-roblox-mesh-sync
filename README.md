@@ -8,8 +8,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.10.4.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.10.4.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.10.5.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.10.5.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -155,6 +155,8 @@ PartはBlenderプリミティブへ、Studio由来の新規MeshPartはEditableMe
 新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。Blender由来MeshPartの形状を読み取れない場合はプロパティだけを更新し、Studio由来の読み取れないMeshPartだけをスキップします。
 
 複数選択またはModel／Folderの再帰送信では、読み取り権限がないMeshPartと、公開APIから形状を取得できないUnionOperationなどの未対応BasePartをスキップし、標準Partと読み取り可能なMeshPartは送信を続行します。スキップした個数、オブジェクトパス、取得できる場合はAsset IDをStudioのステータスとOutputへ表示します。同じ読み取り不可Assetを共有するMeshPartは権限確認と警告を1回にまとめます。選択対象がスキップ対象だけだった場合は、空の同期を作らず送信を中止します。
+
+SurfaceAppearance、MaterialVariant、MeshPart Textureの画像がAsset権限により読み取れない場合は、画像だけをスキップし、形状、Transform、Material、Color、Transparency、物理設定をBlenderへ送ります。Blender上では既存Materialを変更せず、権限不足の警告をObjectへ保存します。そのObjectをStudioへ戻した場合は、既存のSurfaceAppearance、MaterialVariant、TextureIDを引き継ぎ、読み取れなかった外観を単色で上書きしません。
 
 StudioのCFrameはワールド座標として受信し、BlenderでEmptyを親に設定する際もワールド位置・回転を保持します。ModelとFolderが交互に入れ子になった階層は、Blenderで表現できない交差部分をメタデータとして保持し、Studioへ戻すと元の親子関係を復元します。
 

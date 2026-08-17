@@ -11,7 +11,7 @@ local PREVIOUS_SCHEMA_ID = "roblox-mesh-sync/3"
 local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
-local PLUGIN_VERSION = "0.10.4"
+local PLUGIN_VERSION = "0.10.5"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -1001,13 +1001,15 @@ function MeshSync.start(plugin)
 					return appearanceFor(part, stagedAppearances, stagedImages, stagedImageBlobs)
 				end)
 				if not appearanceReadable then
-					if geometryOwner ~= "BLENDER" then
-						recordSkip(part, "Unreadable MeshPart", tostring(appearanceHashOrError), source, assetId)
-						continue
-					end
+					local appearanceError = tostring(appearanceHashOrError)
 					stagedImages, stagedImageBlobs, stagedAppearances = {}, {}, {}
 					appearanceHashOrError = basicAppearanceFor(part, stagedAppearances)
-					table.insert(propertyOnlyWarnings, `{part:GetFullName()}: PBR images unavailable; basic material sent`)
+					record.appearanceAvailable = false
+					record.appearanceError = appearanceError
+					table.insert(propertyOnlyWarnings,
+						`{part:GetFullName()}: PBR images unavailable; geometry and properties sent without replacing the original Studio appearance. Reason: {appearanceError}`)
+				else
+					record.appearanceAvailable = true
 				end
 				if not readable and geometryOwner ~= "BLENDER" then
 					local reason = tostring(meshHashOrError)
@@ -1045,7 +1047,25 @@ function MeshSync.start(plugin)
 					)
 					continue
 				end
-				record.appearanceHash = appearanceFor(part, appearances, images, imageBlobs)
+				local stagedImages, stagedImageBlobs, stagedAppearances = {}, {}, {}
+				local appearanceReadable, appearanceHashOrError = pcall(function()
+					return appearanceFor(part, stagedAppearances, stagedImages, stagedImageBlobs)
+				end)
+				if not appearanceReadable then
+					local appearanceError = tostring(appearanceHashOrError)
+					stagedImages, stagedImageBlobs, stagedAppearances = {}, {}, {}
+					appearanceHashOrError = basicAppearanceFor(part, stagedAppearances)
+					record.appearanceAvailable = false
+					record.appearanceError = appearanceError
+					table.insert(propertyOnlyWarnings,
+						`{part:GetFullName()}: PBR images unavailable; Part geometry and properties sent without replacing the original Studio appearance. Reason: {appearanceError}`)
+				else
+					record.appearanceAvailable = true
+				end
+				mergeRecords(images, stagedImages)
+				mergeRecords(imageBlobs, stagedImageBlobs)
+				mergeRecords(appearances, stagedAppearances)
+				record.appearanceHash = appearanceHashOrError
 			end
 			record.stateHash = sha256(HttpService:JSONEncode(record))
 			table.insert(objects, record)
@@ -1414,6 +1434,28 @@ function MeshSync.start(plugin)
 		part.Transparency = math.clamp(instanceData.transparency or 0, 0, 1)
 	end
 
+	local function preserveStudioAppearance(part: BasePart, old: BasePart)
+		part.Material = old.Material
+		part.MaterialVariant = old.MaterialVariant
+		part.Color = old.Color
+		part.Transparency = old.Transparency
+		part.Reflectance = old.Reflectance
+		if part:IsA("MeshPart") and old:IsA("MeshPart") then
+			pcall(function() part.TextureID = old.TextureID end)
+			pcall(function() (part :: any).TextureContent = (old :: any).TextureContent end)
+		end
+		for _, child in part:GetChildren() do
+			if child:IsA("SurfaceAppearance") then child:Destroy() end
+		end
+		for _, child in old:GetChildren() do
+			if child:IsA("SurfaceAppearance") then
+				local ok, clone = pcall(function() return child:Clone() end)
+				if ok and clone then clone.Parent = part end
+			end
+		end
+		part:SetAttribute("BlenderAppearancePreserved", true)
+	end
+
 	local function preserveDisabledTransformChannels(part: BasePart, old: BasePart?, transformMask)
 		if not old then return end
 		local incoming = part.CFrame
@@ -1661,6 +1703,7 @@ function MeshSync.start(plugin)
 						part:SetAttribute("RobloxMeshAssetId", tostring(meshAssets[meshHash]))
 					end
 					part:SetAttribute("BlenderStateHash", instanceData.stateHash or "")
+					part:SetAttribute("BlenderAppearanceAvailable", instanceData.appearanceAvailable ~= false)
 					part:SetAttribute("BlenderOriginalParentId", instanceData.parentId)
 					part:SetAttribute("BlenderCollectionIds", HttpService:JSONEncode(instanceData.collectionIds or {}))
 					staged[index] = part
@@ -1750,6 +1793,9 @@ function MeshSync.start(plugin)
 					local parentId = instances[index].parentId
 					local primaryCollectionId = instances[index].primaryCollectionId
 					preserveDisabledTransformChannels(part, old, transformMask)
+					if old and instances[index].appearanceAvailable == false then
+						preserveStudioAppearance(part, old)
+					end
 					local targetParent = hierarchyById[parentId] or hierarchyById[primaryCollectionId]
 					if not targetParent and old then
 						local previousParent = old.Parent

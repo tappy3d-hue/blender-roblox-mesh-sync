@@ -36,6 +36,8 @@ DOCUMENT_MODEL_GUID_KEY = "rbx_mesh_document_model_guid"
 DOCUMENT_MODEL_NAME_KEY = "rbx_mesh_document_model_name"
 DOCUMENT_ROOT_KIND_KEY = "rbx_mesh_document_root_kind"
 GEOMETRY_WARNING_KEY = "rbx_mesh_geometry_warning"
+APPEARANCE_AVAILABLE_KEY = "rbx_mesh_appearance_available"
+APPEARANCE_WARNING_KEY = "rbx_mesh_appearance_warning"
 _AUTO_APPLY_FAILED_REVISION = 0
 
 
@@ -491,6 +493,18 @@ def _apply_settings(obj, record, appearance, image_by_hash):
         obj[APPEARANCE_METADATA_KEY] = json.dumps(metadata, sort_keys=True)
     else:
         obj.pop(APPEARANCE_METADATA_KEY, None)
+    appearance_available = record.get("appearanceAvailable", True) is not False
+    obj[APPEARANCE_AVAILABLE_KEY] = appearance_available
+    if appearance_available:
+        obj.pop(APPEARANCE_WARNING_KEY, None)
+    else:
+        obj[APPEARANCE_WARNING_KEY] = str(
+            record.get("appearanceError", "Studio appearance images were not readable")
+        )
+        # Keep the current Blender material assignment intact. The accessible
+        # Material/Color/Transparency values above still update the sync settings,
+        # but an unreadable Studio texture must not destroy a local material.
+        return
     restore_object_preview(obj)
     if appearance.get("maps"):
         material = _pbr_material(appearance, image_by_hash)
