@@ -55,7 +55,7 @@ class MeshSyncServerTests(unittest.TestCase):
         data = json.loads(body)
         self.assertTrue(data["ok"])
         self.assertEqual(data["version"], 3)
-        self.assertEqual(data["addonVersion"], "0.10.3")
+        self.assertEqual(data["addonVersion"], "0.10.4")
         self.assertIn("roblox-mesh-sync/4", data["schemas"])
         self.assertIn("roblox-mesh-sync/3", data["schemas"])
         self.assertIn("roblox-mesh-sync/2", data["schemas"])

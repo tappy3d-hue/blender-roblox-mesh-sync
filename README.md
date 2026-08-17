@@ -8,8 +8,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.10.3.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.10.3.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.10.4.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.10.4.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -98,7 +98,9 @@ rojo build .\roblox_plugin\default.project.json --output RobloxPrimitiveSync.rbx
 
 1. Rojoで生成した`.rbxm`をStudioへ読み込み、`Save as Local Plugin`でローカルプラグインにします。
 2. 初回だけBlenderの`Nパネル > Roblox > Mesh Sync`で`Allow Studio Connection`を押します。ローカルペアリングが60秒間、1回だけ許可されます。
-3. Studioの`Blender Mesh Sync`でBlenderに表示されているポート番号を確認し、必要ならStudioの`Port`欄を同じ番号にして`Connect`を押します。トークンや接続コードのコピーは不要です。入力したポートと自動取得したトークンは保存され、次回以降は自動接続します。周辺ポートの自動検出も補助として使用します。接続を破棄する場合は`Forget Connection`を使用します。
+3. Studioの`Blender Mesh Sync`でBlenderに表示されているポート番号を確認し、Studioの`Port`欄を同じ番号にして`Connect`を押します。トークンや接続コードのコピーは不要です。入力したポートと自動取得したトークンは保存され、次回以降は自動接続します。接続を破棄する場合は`Forget Connection`を使用します。
+
+接続確認は入力ポートを1秒で確認し、応答がない場合だけ既定ポート`27182`を1回確認します。通常のメッシュ転送とは別の短いタイムアウトを使うため、古い接続情報が残っていてもConnectが約30秒停止することはありません。
 
 Experience Settingsの`Allow HTTP Requests`を有効にする必要はありません。初回接続時にStudioがこのローカルプラグインへ`127.0.0.1`との通信許可を求めた場合だけ、そのプラグイン権限を許可してください。`Allow Mesh / Image APIs`も事前に有効化せず、所有権のあるMesh／画像を読み取れない場合に限り、表示されたエラーとAsset権限を確認します。
 

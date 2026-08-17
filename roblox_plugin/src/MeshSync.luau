@@ -11,7 +11,7 @@ local PREVIOUS_SCHEMA_ID = "roblox-mesh-sync/3"
 local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
-local PLUGIN_VERSION = "0.10.3"
+local PLUGIN_VERSION = "0.10.4"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -448,6 +448,28 @@ function MeshSync.start(plugin)
 		return HttpService:JSONDecode(request("GET", path))
 	end
 
+	local function fetchConnectionJson(candidatePort: number, candidateToken: string, path: string): any
+		local headers = { ["Content-Type"] = "application/json" }
+		if candidateToken ~= "" then
+			headers["X-Roblox-Sync-Token"] = candidateToken
+		end
+		local requestOk, response = pcall(function()
+			return HttpService:RequestAsync({
+				Url = `http://127.0.0.1:{candidatePort}{path}`,
+				Method = "GET",
+				Headers = headers,
+				Timeout = 1,
+			})
+		end)
+		if not requestOk then
+			error(`Port {candidatePort}: {tostring(response)}`)
+		end
+		if not response.Success then
+			error(`Port {candidatePort}: HTTP {response.StatusCode} {response.StatusMessage}`)
+		end
+		return HttpService:JSONDecode(response.Body)
+	end
+
 	local function requestPairing(candidatePort: number): (number, string)
 		local requestOk, response = pcall(function()
 			return HttpService:RequestAsync({
@@ -455,7 +477,7 @@ function MeshSync.start(plugin)
 				Method = "POST",
 				Headers = { ["Content-Type"] = "application/json" },
 				Body = "{}",
-				Timeout = 2,
+				Timeout = 1,
 			})
 		end)
 		if not requestOk then
@@ -487,11 +509,9 @@ function MeshSync.start(plugin)
 			end
 		end
 		addCandidate(preferredPort)
-		-- Blender may move to 27183 or another nearby port when 27182 is still
-		-- occupied by an older add-on instance. Probe a small localhost-only range.
-		for candidate = DEFAULT_PORT, DEFAULT_PORT + 20 do
-			addCandidate(candidate)
-		end
+		-- The port shown in Blender is authoritative. Fall back to the default once,
+		-- but do not probe a long range of closed ports during an interactive connect.
+		addCandidate(DEFAULT_PORT)
 
 		local lastError = "Blender Mesh Sync server was not found"
 		local approvalRequired = false
@@ -1851,12 +1871,19 @@ function MeshSync.start(plugin)
 			end
 
 			local authenticated = false
+			local availableRevision = nil
 			if storedPort == requestedPort and storedToken then
 				port, token = storedPort, storedToken
-				local authOk = pcall(function()
-					fetchJson("/v1/revision")
+				local authOk, revisionData = pcall(function()
+					return fetchConnectionJson(port, token, "/v1/revision")
 				end)
-				authenticated = authOk
+				if authOk then
+					authenticated = true
+					availableRevision = expectNumber(
+						expectTable(revisionData, "revision response").revision,
+						"revision"
+					)
+				end
 			end
 			if not authenticated then
 				port, token = discoverPairing(requestedPort)
@@ -1864,7 +1891,7 @@ function MeshSync.start(plugin)
 			end
 			ui.portBox.Text = tostring(port)
 			plugin:SetSetting(PORT_KEY, port)
-			local health = HttpService:JSONDecode(HttpService:GetAsync(`http://127.0.0.1:{port}/v1/health`, true))
+			local health = fetchConnectionJson(port, "", "/v1/health")
 			if type(health) ~= "table" or health.ok ~= true then
 				error("Blender Mesh Sync server did not answer")
 			end
@@ -1874,8 +1901,13 @@ function MeshSync.start(plugin)
 			if type(health.schemas) ~= "table" or not table.find(health.schemas, SCHEMA_ID) then
 				error(`Blender add-on does not support {SCHEMA_ID}; install add-on {PLUGIN_VERSION}`)
 			end
-			local revisionData = expectTable(fetchJson("/v1/revision"), "revision response")
-			local availableRevision = expectNumber(revisionData.revision, "revision")
+			if availableRevision == nil then
+				local revisionData = expectTable(
+					fetchConnectionJson(port, token, "/v1/revision"),
+					"revision response"
+				)
+				availableRevision = expectNumber(revisionData.revision, "revision")
+			end
 			plugin:SetSetting(CONNECTION_KEY, ui.connectionBox.Text)
 			connected = true
 			-- Treat the revision that already existed before this connection as the

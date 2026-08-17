@@ -3,7 +3,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Roblox Primitive Sync",
     "author": "Roblox Primitive Sync contributors",
-    "version": (0, 10, 3),
+    "version": (0, 10, 4),
     "blender": (4, 2, 0),
     "location": "3D View > Shift+A > Roblox Parts; Sidebar > Roblox",
     "description": "Author models that rebuild as standard Roblox Parts",
