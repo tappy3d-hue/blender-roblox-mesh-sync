@@ -8,8 +8,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.10.5.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.10.5.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.10.6.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.10.6.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -148,7 +148,7 @@ ColorはBlender内部のシーンリニアRGBとRobloxのsRGBを送受信時に�
 1. BlenderでMesh Sync Serverを起動し、Studioプラグインを接続します。
 2. StudioでPart、MeshPart、Model、Folderを選択します。
 3. 必要に応じてStudioプラグインの`Position`、`Rotation`、`Scale`をオフにします。既存Blenderオブジェクトではオフにした値を維持します。
-4. `Send Selection to Blender`を押します。ModelとFolderの子は再帰的に収集され、既定の`Auto Apply from Studio`では直ちにBlenderへ適用されます。適用全体はBlenderのUndo対象です。
+4. `Send Selection to Blender`を押します。ModelまたはFolderを1つ選ぶだけで、配下の全子孫にあるPart／MeshPartが再帰的に収集されます。途中にConfiguration、Accessory、BasePartなどが挟まっていても探索を継続します。既定の`Auto Apply from Studio`では直ちにBlenderへ適用され、適用全体はBlenderのUndo対象です。
 
 確認してから反映したい場合だけ`Auto Apply from Studio`をオフにし、`Review Incoming`と`Apply Studio Selection`を使用します。自動適用中に同じGUIDのローカル変更が見つかった場合は、明示的にStudioから送った内容を採用します。
 

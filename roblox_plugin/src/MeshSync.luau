@@ -11,7 +11,7 @@ local PREVIOUS_SCHEMA_ID = "roblox-mesh-sync/3"
 local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
-local PLUGIN_VERSION = "0.10.5"
+local PLUGIN_VERSION = "0.10.6"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -801,14 +801,20 @@ function MeshSync.start(plugin)
 			included[instance] = true
 			table.insert(hierarchyInstances, instance)
 		end
-		local function visit(instance: Instance)
+		local function visit(instance: Instance, recurseDescendants: boolean?)
 			if included[instance] then return end
 			included[instance] = true
-			if instance:IsA("Model") or instance:IsA("Folder") then
+			local isContainer = instance:IsA("Model") or instance:IsA("Folder")
+			if isContainer then
 				table.insert(hierarchyInstances, instance)
-				for _, child in instance:GetChildren() do visit(child) end
 			elseif instance:IsA("BasePart") then
 				table.insert(parts, instance)
+			end
+			-- A selected Model/Folder can contain exportable geometry below
+			-- Configuration, Accessory, BasePart, or other intermediate instances.
+			-- Walk every descendant and only emit supported hierarchy/geometry types.
+			if recurseDescendants == true or isContainer then
+				for _, child in instance:GetChildren() do visit(child, true) end
 			end
 		end
 		for _, root in roots do
@@ -816,9 +822,9 @@ function MeshSync.start(plugin)
 			-- Collection. Export its children so a round trip does not create an
 			-- extra Collection with the .blend filename.
 			if root == generatedRoot then
-				for _, child in root:GetChildren() do visit(child) end
+				for _, child in root:GetChildren() do visit(child, true) end
 			else
-				visit(root)
+				visit(root, false)
 			end
 		end
 		-- A Part-only selection still needs its generated ancestors so Blender
