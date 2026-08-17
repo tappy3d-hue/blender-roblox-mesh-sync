@@ -11,7 +11,7 @@ local PREVIOUS_SCHEMA_ID = "roblox-mesh-sync/3"
 local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
-local PLUGIN_VERSION = "0.10.2"
+local PLUGIN_VERSION = "0.10.3"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -562,7 +562,7 @@ function MeshSync.start(plugin)
 			return AssetService:CreateEditableImageAsync(content)
 		end)
 		if not ok or not editableOrError then
-			error(`Could not read {role} image. Enable Mesh & Image APIs and grant asset permission: {tostring(editableOrError)}`)
+			error(`Could not read {role} image. The logged-in Studio user or experience must own the asset or have explicit asset permission: {tostring(editableOrError)}`)
 		end
 		local editable = editableOrError
 		local size = editable.Size
@@ -660,7 +660,7 @@ function MeshSync.start(plugin)
 			return AssetService:CreateEditableMeshAsync(part.MeshContent, { FixedSize = true })
 		end)
 		if not ok or not editableOrError then
-			error(`Could not read mesh {part:GetFullName()}. Enable Mesh & Image APIs and grant asset permission: {tostring(editableOrError)}`)
+			error(`Could not read mesh {part:GetFullName()}. The logged-in Studio user or experience must own the asset or have explicit asset permission: {tostring(editableOrError)}`)
 		end
 		local editable = editableOrError
 		local vertexIds = editable:GetVertices()
@@ -1128,7 +1128,7 @@ function MeshSync.start(plugin)
 
 		local editableMesh = AssetService:CreateEditableMesh()
 		if not editableMesh then
-			error("CreateEditableMesh failed. Enable Mesh/Image APIs in Experience Settings.")
+			error("CreateEditableMesh returned nil in this Studio plugin session.")
 		end
 		local vertexIds = table.create(#vertices)
 		for index, positionValue in vertices do
@@ -1271,7 +1271,7 @@ function MeshSync.start(plugin)
 		end
 		local editableImage = AssetService:CreateEditableImage({ Size = Vector2.new(width, height) })
 		if not editableImage then
-			error("CreateEditableImage failed. Enable Mesh/Image APIs in Experience Settings.")
+			error("CreateEditableImage returned nil in this Studio plugin session.")
 		end
 		editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(width, height), buffer.fromstring(raw))
 		local assetId = uploadAsset(editableImage, Enum.AssetType.Image, record.name or `BlenderImage_{string.sub(hash, 1, 8)}`)

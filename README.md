@@ -8,8 +8,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.10.2.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.10.2.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.10.3.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.10.3.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -96,11 +96,11 @@ rojo build .\roblox_plugin\default.project.json --output RobloxPrimitiveSync.rbx
 
 ### 初回設定
 
-1. Studioで`Home > Game Settings > Security > Allow HTTP Requests`を有効にします。
-2. 必要な場合は`Allow Mesh / Image APIs`も有効にします。
-3. Rojoで生成した`.rbxm`をStudioへ読み込み、`Save as Local Plugin`でローカルプラグインにします。
-4. 初回だけBlenderの`Nパネル > Roblox > Mesh Sync`で`Allow Studio Connection`を押します。ローカルペアリングが60秒間、1回だけ許可されます。
-5. Studioの`Blender Mesh Sync`でBlenderに表示されているポート番号を確認し、必要ならStudioの`Port`欄を同じ番号にして`Connect`を押します。トークンや接続コードのコピーは不要です。入力したポートと自動取得したトークンは保存され、次回以降は自動接続します。周辺ポートの自動検出も補助として使用します。接続を破棄する場合は`Forget Connection`を使用します。
+1. Rojoで生成した`.rbxm`をStudioへ読み込み、`Save as Local Plugin`でローカルプラグインにします。
+2. 初回だけBlenderの`Nパネル > Roblox > Mesh Sync`で`Allow Studio Connection`を押します。ローカルペアリングが60秒間、1回だけ許可されます。
+3. Studioの`Blender Mesh Sync`でBlenderに表示されているポート番号を確認し、必要ならStudioの`Port`欄を同じ番号にして`Connect`を押します。トークンや接続コードのコピーは不要です。入力したポートと自動取得したトークンは保存され、次回以降は自動接続します。周辺ポートの自動検出も補助として使用します。接続を破棄する場合は`Forget Connection`を使用します。
+
+Experience Settingsの`Allow HTTP Requests`を有効にする必要はありません。初回接続時にStudioがこのローカルプラグインへ`127.0.0.1`との通信許可を求めた場合だけ、そのプラグイン権限を許可してください。`Allow Mesh / Image APIs`も事前に有効化せず、所有権のあるMesh／画像を読み取れない場合に限り、表示されたエラーとAsset権限を確認します。
 
 Studioローカルプラグインは常に`%LOCALAPPDATA%\Roblox\Plugins\RobloxPrimitiveSync-Studio.rbxm`へ出力します。更新時はこの固定名ファイルを上書きし、バージョン番号付きや`-Dev`付きのコピーをPluginsフォルダへ追加しません。`Update Studio Plugin.cmd`と`Watch Studio Plugin.cmd`もこの正確な保存先を使用します。
 
