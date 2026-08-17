@@ -33,6 +33,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 Studioプラグインを更新する場合はRojoをPATHへ追加し、`Update Studio Plugin.cmd`を実行します。継続ビルドには`Watch Studio Plugin.cmd`を使用します。スクリプトは個人PC固有のパスを使用しません。
 
+配布用ファイルは`Build Release.ps1`で生成します。Blender ZIPは`blender_manifest.toml`がアーカイブ直下にあることを自動検証し、Studio RBXMも同じバージョン名で`dist/`へ出力します。ソースフォルダー自体をZIPにするとmanifestが1階層下へ入るため、Releaseには使用しないでください。
+
 ソースコードはMIT Licenseです。同梱マテリアルプレビュー画像については、公開配布前に [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を確認してください。
 
 ## フォルダー
