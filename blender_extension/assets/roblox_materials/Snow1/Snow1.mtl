@@ -1,0 +1,18 @@
+﻿newmtl Snow1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0351638 0.0346909 0.03612 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Snow1_diff.png
+map_Kd textures/Snow1_diff.png
+map_d textures/Snow1_diff.png
+
+map_Bump textures/Snow1_nmap.png
+
+map_Ns textures/Snow1_spec.png
+

@@ -1,0 +1,18 @@
+﻿newmtl Ice1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0542108 0.0534818 0.055685 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Ice1_diff.png
+map_Kd textures/Ice1_diff.png
+map_d textures/Ice1_diff.png
+
+map_Bump textures/Ice1_nmap.png
+
+map_Ns textures/Ice1_spec.png
+

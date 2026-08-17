@@ -1,0 +1,18 @@
+﻿newmtl Cobblestone1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0117213 0.0115636 0.01204 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Cobblestone1_diff.png
+map_Kd textures/Cobblestone1_diff.png
+map_d textures/Cobblestone1_diff.png
+
+map_Bump textures/Cobblestone1_nmap.png
+
+map_Ns textures/Cobblestone1_spec.png
+

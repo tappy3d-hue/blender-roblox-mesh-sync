@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "roblox_primitive_sync"
+version = "0.10.1"
+name = "Roblox Primitive and Mesh Sync"
+tagline = "Primitive, tube, and bidirectional Roblox mesh sync"
+maintainer = "Roblox Primitive Sync contributors"
+type = "add-on"
+
+website = "https://create.roblox.com/docs/parts"
+tags = ["Import-Export", "Modeling"]
+blender_version_min = "4.2.0"
+license = ["SPDX:MIT"]
+
+[permissions]
+files = "Load bundled material textures and export model data"
+network = "Serve mesh data to Roblox Studio on localhost"

@@ -1,0 +1,18 @@
+﻿newmtl Limestone1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.019047 0.0187909 0.019565 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Limestone1_diff.png
+map_Kd textures/Limestone1_diff.png
+map_d textures/Limestone1_diff.png
+
+map_Bump textures/Limestone1_nmap.png
+
+map_Ns textures/Limestone1_spec.png
+

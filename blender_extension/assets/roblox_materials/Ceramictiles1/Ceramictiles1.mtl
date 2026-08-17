@@ -1,0 +1,18 @@
+﻿newmtl Ceramictiles1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.118678 0.117082 0.121905 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Ceramictiles1_diff.png
+map_Kd textures/Ceramictiles1_diff.png
+map_d textures/Ceramictiles1_diff.png
+
+map_Bump textures/Ceramictiles1_nmap.png
+
+map_Ns textures/Ceramictiles1_spec.png
+

@@ -1,0 +1,18 @@
+﻿newmtl Concrete1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0161167 0.0159 0.016555 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Concrete1_diff.png
+map_Kd textures/Concrete1_diff.png
+map_d textures/Concrete1_diff.png
+
+map_Bump textures/Concrete1_nmap.png
+
+map_Ns textures/Concrete1_spec.png
+

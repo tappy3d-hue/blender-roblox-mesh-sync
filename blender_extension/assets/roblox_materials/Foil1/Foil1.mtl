@@ -1,0 +1,14 @@
+﻿newmtl Foil1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.147981 0.145991 0.152005 
+
+d 1
+
+Ns 255
+
+map_Bump textures/Foil1_nmap.png
+
+map_Ns textures/Foil1_spec.png
+

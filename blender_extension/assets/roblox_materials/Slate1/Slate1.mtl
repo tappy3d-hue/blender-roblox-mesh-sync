@@ -1,0 +1,18 @@
+﻿newmtl Slate1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0249077 0.0245727 0.025585 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Slate1_diff.png
+map_Kd textures/Slate1_diff.png
+map_d textures/Slate1_diff.png
+
+map_Bump textures/Slate1_nmap.png
+
+map_Ns textures/Slate1_spec.png
+

@@ -1,0 +1,18 @@
+﻿newmtl Clayrooftiles1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0307683 0.0303546 0.031605 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Clayrooftiles1_diff.png
+map_Kd textures/Clayrooftiles1_diff.png
+map_d textures/Clayrooftiles1_diff.png
+
+map_Bump textures/Clayrooftiles1_nmap.png
+
+map_Ns textures/Clayrooftiles1_spec.png
+

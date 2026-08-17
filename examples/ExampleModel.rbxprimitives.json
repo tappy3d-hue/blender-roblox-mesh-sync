@@ -1,0 +1,33 @@
+{
+  "schema": "roblox-primitives/1",
+  "generator": {
+    "name": "Roblox Primitive Sync",
+    "version": "0.2.1"
+  },
+  "model": {
+    "id": "07f12165-e857-4ca7-90fa-50655f6b3bd8",
+    "name": "ExampleModel"
+  },
+  "units": {
+    "name": "stud",
+    "studsPerBlenderUnit": 1.0
+  },
+  "exportedAt": "2026-08-14T00:00:00+00:00",
+  "parts": [
+    {
+      "id": "d7e74f4d-3c22-40ad-ab22-24d71964e673",
+      "name": "ExampleBlock",
+      "type": "Block",
+      "size": [4.0, 2.0, 6.0],
+      "cframe": [0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+      "color": [0.639, 0.635, 0.647],
+      "material": "Plastic",
+      "transparency": 0.0,
+      "anchored": true,
+      "canCollide": true,
+      "canTouch": true,
+      "canQuery": true,
+      "castShadow": true
+    }
+  ]
+}

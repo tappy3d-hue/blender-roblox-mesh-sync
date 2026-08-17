@@ -1,0 +1,18 @@
+﻿newmtl Corrodedmetal1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0234425 0.0231273 0.02408 
+
+d 1
+
+Ns 40
+
+map_Ka textures/Corrodedmetal1_diff.png
+map_Kd textures/Corrodedmetal1_diff.png
+map_d textures/Corrodedmetal1_diff.png
+
+map_Bump textures/Corrodedmetal1_nmap.png
+
+map_Ns textures/Corrodedmetal1_spec.png
+

@@ -1,0 +1,16 @@
+﻿newmtl Smoothplastic1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.147981 0.145991 0.152005 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Smoothplastic1_diff.png
+map_Kd textures/Smoothplastic1_diff.png
+map_d textures/Smoothplastic1_diff.png
+
+map_Bump textures/Smoothplastic1_nmap.png
+

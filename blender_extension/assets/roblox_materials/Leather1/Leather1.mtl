@@ -1,0 +1,18 @@
+﻿newmtl Leather1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0395592 0.0390273 0.040635 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Leather1_diff.png
+map_Kd textures/Leather1_diff.png
+map_d textures/Leather1_diff.png
+
+map_Bump textures/Leather1_nmap.png
+
+map_Ns textures/Leather1_spec.png
+

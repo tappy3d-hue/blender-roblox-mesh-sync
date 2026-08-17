@@ -1,0 +1,14 @@
+﻿newmtl Diamondplate1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0732579 0.0722727 0.0752499 
+
+d 1
+
+Ns 255
+
+map_Bump textures/Diamondplate1_nmap.png
+
+map_Ns textures/Diamondplate1_spec.png
+

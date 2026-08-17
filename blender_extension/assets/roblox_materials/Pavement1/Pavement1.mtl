@@ -1,0 +1,18 @@
+﻿newmtl Pavement1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0146516 0.0144545 0.01505 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Pavement1_diff.png
+map_Kd textures/Pavement1_diff.png
+map_d textures/Pavement1_diff.png
+
+map_Bump textures/Pavement1_nmap.png
+
+map_Ns textures/Pavement1_spec.png
+

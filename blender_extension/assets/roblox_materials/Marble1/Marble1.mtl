@@ -1,0 +1,18 @@
+﻿newmtl Marble1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0439547 0.0433636 0.04515 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Marble1_diff.png
+map_Kd textures/Marble1_diff.png
+map_d textures/Marble1_diff.png
+
+map_Bump textures/Marble1_nmap.png
+
+map_Ns textures/Marble1_spec.png
+

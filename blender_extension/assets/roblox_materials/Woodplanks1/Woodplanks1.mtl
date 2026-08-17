@@ -1,0 +1,18 @@
+﻿newmtl Woodplanks1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.027838 0.0274636 0.028595 
+
+d 1
+
+Ns 0
+
+map_Ka textures/Woodplanks1_diff.png
+map_Kd textures/Woodplanks1_diff.png
+map_d textures/Woodplanks1_diff.png
+
+map_Bump textures/Woodplanks1_nmap.png
+
+map_Ns textures/Woodplanks1_spec.png
+
