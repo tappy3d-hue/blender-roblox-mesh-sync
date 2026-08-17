@@ -4,6 +4,29 @@ Blenderで作ったプリミティブモデルをRoblox Studioの標準Partと�
 
 Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox MaterialのBlenderプレビューを含みます。設計指針は [SPEC.md](SPEC.md) を参照してください。
 
+## ダウンロードと簡単インストール
+
+[GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
+
+- `RobloxPrimitiveSync-Blender-0.10.2.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.10.2.rbxm` — Roblox Studio用ローカルプラグイン
+
+### Blender
+
+1. `編集 > プリファレンス > エクステンション`を開きます。
+2. 右上のメニューから`ディスクからインストール`を選びます。
+3. ダウンロードしたBlender用ZIPを、展開せずに選択します。
+4. `Roblox Primitive and Mesh Sync`を有効にします。
+
+### Roblox Studio
+
+1. ダウンロードした`.rbxm`をStudioの画面へドラッグ＆ドロップします。
+2. Explorerに追加された`RobloxPrimitiveSync`を右クリックします。
+3. `Save as Local Plugin`を選択します。
+4. Studioを再起動するか、プラグインを再読み込みします。
+
+更新時は、同じ固定名のローカルプラグインを置き換えてください。古いバージョンを同時に残すとツールバーが重複します。
+
 ## チーム開発
 
 このリポジトリにはBlenderアドオン、Rojo用Studioプラグイン、テスト、仕様書を含みます。`dist/`、`.rbxm`、`.zip`、Pythonキャッシュは生成物としてGit管理しません。
