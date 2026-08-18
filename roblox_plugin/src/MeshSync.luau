@@ -11,7 +11,7 @@ local PREVIOUS_SCHEMA_ID = "roblox-mesh-sync/3"
 local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
-local PLUGIN_VERSION = "0.10.6"
+local PLUGIN_VERSION = "0.10.7"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -1236,7 +1236,11 @@ function MeshSync.start(plugin)
 			})
 		end)
 		if not ok then
-			error(`Asset upload failed: {result}`)
+			local uploadError = tostring(result)
+			if string.find(string.lower(uploadError), "not available yet", 1, true) then
+				error(`Asset upload failed: {uploadError}. Enable File > Beta Features > CreateAssetAsync Lua API, then restart Studio.`)
+			end
+			error(`Asset upload failed: {uploadError}`)
 		end
 		if result ~= Enum.CreateAssetResult.Success or type(idOrError) ~= "number" then
 			error(`Asset upload failed: {tostring(result)} {tostring(idOrError)}`)
@@ -1589,6 +1593,32 @@ function MeshSync.start(plugin)
 		return byId
 	end
 
+	local function resolveInstanceHierarchyParent(nodeById, parentId, primaryCollectionId): string?
+		if not parentId then return primaryCollectionId end
+		if not primaryCollectionId then return parentId end
+		if parentId == primaryCollectionId then return parentId end
+
+		local function isDescendant(candidateId, ancestorId): boolean
+			local currentId = candidateId
+			local visited = {}
+			while currentId and not visited[currentId] do
+				if currentId == ancestorId then return true end
+				visited[currentId] = true
+				local current = nodeById[currentId]
+				if not current then return false end
+				currentId = current.parentId or current.primaryCollectionId
+			end
+			return false
+		end
+
+		-- Blender stores an Object parent (Model/Empty) and Collection membership
+		-- separately. Studio can only give a Part one Parent, so choose whichever
+		-- candidate is deeper in the original mixed Model/Folder hierarchy.
+		if isDescendant(primaryCollectionId, parentId) then return primaryCollectionId end
+		if isDescendant(parentId, primaryCollectionId) then return parentId end
+		return parentId
+	end
+
 	local function importRevision(force: boolean?)
 		if importing then
 			return
@@ -1626,6 +1656,10 @@ function MeshSync.start(plugin)
 			local appearances = expectTable(document.appearances, "appearances")
 			local instances = expectTable(document.instances, "instances")
 			local hierarchy = expectTable(document.hierarchy or {}, "hierarchy")
+			local hierarchyNodeById = {}
+			for _, node in hierarchy do
+				if type(node.id) == "string" then hierarchyNodeById[node.id] = node end
+			end
 			local transformMask = expectTable(document.transformMask or {}, "transformMask")
 			if #instances == 0 or #instances > MAX_INSTANCES then
 				error("Manifest has an invalid instance count")
@@ -1802,7 +1836,12 @@ function MeshSync.start(plugin)
 					if old and instances[index].appearanceAvailable == false then
 						preserveStudioAppearance(part, old)
 					end
-					local targetParent = hierarchyById[parentId] or hierarchyById[primaryCollectionId]
+					local targetParentId = resolveInstanceHierarchyParent(
+						hierarchyNodeById,
+						parentId,
+						primaryCollectionId
+					)
+					local targetParent = hierarchyById[targetParentId]
 					if not targetParent and old then
 						local previousParent = old.Parent
 						if previousParent and previousParent ~= rootFolder
