@@ -1,12 +1,54 @@
 from __future__ import annotations
 
-import bpy
 from bpy.types import Menu, Panel
 
 from .mesh_sync_server import SERVER
+from .i18n import trf
 from .properties import PART_TYPE_ITEMS
 from .tube import estimated_tube_part_count
 from .validation import estimated_scene_part_count
+
+
+def _selected_sync_objects(context):
+    return [obj for obj in context.selected_objects if obj.type in {"MESH", "EMPTY"}]
+
+
+def _draw_connection_status(layout):
+    row = layout.row(align=True)
+    if SERVER.running:
+        row.label(text=trf("Studio connection ready · Port {port}", port=SERVER.port), icon="CHECKMARK")
+        row.operator("rbx_mesh_sync.stop_server", text="Stop")
+    else:
+        row.label(text="Studio connection stopped", icon="PAUSE")
+        row.operator("rbx_mesh_sync.start_server", text="Start")
+
+    if SERVER.pairing_active:
+        layout.label(
+            text=trf("Studio pairing allowed ({seconds}s)", seconds=SERVER.pairing_seconds_remaining),
+            icon="UNLOCKED",
+        )
+    elif SERVER.running:
+        layout.operator("rbx_mesh_sync.allow_pairing", text="Allow Studio Connection", icon="LINKED")
+
+
+def _draw_last_result(layout):
+    result = SERVER.last_result
+    if not isinstance(result, dict):
+        return
+    if result.get("ok"):
+        layout.label(
+            text=trf(
+                "Last send: {added} added / {updated} updated",
+                added=result.get("addedInstances", 0),
+                updated=result.get("updatedInstances", 0),
+            ),
+            icon="CHECKMARK",
+        )
+    else:
+        layout.label(
+            text=trf("Studio failed during {stage}", stage=result.get("stage", "unknown stage")),
+            icon="ERROR",
+        )
 
 
 class RBX_MT_AddMenu(Menu):
@@ -29,95 +71,7 @@ def draw_add_menu(self, context):
 
 class RBX_PT_MainPanel(Panel):
     bl_idname = "RBX_PT_primitive_sync_main"
-    bl_label = "Primitive Sync"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Roblox"
-
-    def draw(self, context):
-        layout = self.layout
-        if not hasattr(context.scene, "rbx_primitive_sync"):
-            layout.label(text="Add-on registration incomplete. Reload the extension.", icon="ERROR")
-            return
-        scene_settings = context.scene.rbx_primitive_sync
-
-        layout.prop(scene_settings, "model_name")
-        layout.prop(scene_settings, "studs_per_unit")
-        layout.label(
-            text=f"Estimated Studio Parts: {estimated_scene_part_count(context.scene)}",
-            icon="INFO",
-        )
-
-        box = layout.box()
-        box.label(text="Add Part")
-        grid = box.grid_flow(columns=2, even_columns=True, align=True)
-        for identifier, label, _description in PART_TYPE_ITEMS:
-            operator = grid.operator("rbx_primitive_sync.add_part", text=label)
-            operator.part_type = identifier
-
-        conversion = layout.box()
-        conversion.label(text="Convert Existing Meshes")
-        conversion.prop(scene_settings, "conversion_type")
-        conversion.prop(scene_settings, "conversion_tolerance")
-        conversion.prop(scene_settings, "keep_conversion_backup")
-        conversion.operator("rbx_primitive_sync.convert_selected", icon="MODIFIER")
-
-        layout.separator()
-        layout.operator("rbx_primitive_sync.validate_scene", icon="CHECKMARK")
-        layout.operator("rbx_primitive_sync.repair_guids", icon="FILE_REFRESH")
-        layout.operator("rbx_primitive_sync.export_json", icon="EXPORT")
-
-
-class RBX_PT_ObjectPanel(Panel):
-    bl_idname = "RBX_PT_primitive_sync_object"
-    bl_label = "Selected Part"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Roblox"
-    bl_parent_id = RBX_PT_MainPanel.bl_idname
-
-    @classmethod
-    def poll(cls, context):
-        return bool(
-            context.active_object
-            and hasattr(context.active_object, "rbx_primitive_sync")
-            and context.active_object.rbx_primitive_sync.is_roblox_part
-        )
-
-    def draw(self, context):
-        layout = self.layout
-        settings = context.active_object.rbx_primitive_sync
-        layout.label(text=f"Type: {settings.part_type}")
-        layout.prop(settings, "sync_enabled")
-        object_id_row = layout.row()
-        object_id_row.enabled = False
-        object_id_row.prop(settings, "guid")
-        layout.prop(settings, "material")
-        layout.prop(settings, "color")
-        layout.prop(settings, "transparency")
-        layout.prop(settings, "anchored")
-
-        if settings.part_type == "Tube":
-            tube = layout.box()
-            tube.label(text="Tube Approximation")
-            tube.prop(settings, "tube_inner_ratio")
-            tube.prop(settings, "tube_segments")
-            count = estimated_tube_part_count(settings.tube_segments)
-            tube.label(text=f"Studio Parts: {count} WedgeParts", icon="INFO")
-            if count > 128:
-                tube.label(text="High Part count", icon="ERROR")
-
-        collision = layout.box()
-        collision.label(text="Collision")
-        collision.prop(settings, "can_collide")
-        collision.prop(settings, "can_touch")
-        collision.prop(settings, "can_query")
-        collision.prop(settings, "cast_shadow")
-
-
-class RBX_PT_MeshSyncPanel(Panel):
-    bl_idname = "RBX_PT_mesh_sync_main"
-    bl_label = "Mesh Sync"
+    bl_label = "Roblox Sync"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "Roblox"
@@ -129,64 +83,249 @@ class RBX_PT_MeshSyncPanel(Panel):
             return
         settings = context.scene.rbx_primitive_sync
 
-        connection = layout.box()
-        connection.label(text="Studio Connection")
-        connection.prop(settings, "mesh_sync_port")
-        row = connection.row(align=True)
-        row.operator("rbx_mesh_sync.start_server", text="Start")
-        row.operator("rbx_mesh_sync.stop_server", text="Stop")
-        connection.operator("rbx_mesh_sync.allow_pairing", icon="LINKED")
-        if SERVER.running:
-            connection.label(text=f"Running on 127.0.0.1:{SERVER.port}", icon="CHECKMARK")
-            if SERVER.pairing_active:
-                connection.label(
-                    text=f"Studio pairing allowed ({SERVER.pairing_seconds_remaining}s)",
-                    icon="UNLOCKED",
+        _draw_connection_status(layout)
+
+        selected = _selected_sync_objects(context)
+        selected_meshes = [obj for obj in selected if obj.type == "MESH"]
+        selected_parts = sum(
+            1
+            for obj in selected_meshes
+            if obj.rbx_primitive_sync.is_roblox_part and obj.rbx_primitive_sync.sync_enabled
+        )
+        selected_mesh_parts = sum(
+            1
+            for obj in selected_meshes
+            if not obj.rbx_primitive_sync.is_roblox_part
+            and obj.rbx_primitive_sync.mesh_sync_enabled
+        )
+        selected_empties = sum(1 for obj in selected if obj.type == "EMPTY")
+        selection_text = trf(
+            "Selected: {parts} Parts / {mesh_parts} MeshParts",
+            parts=selected_parts,
+            mesh_parts=selected_mesh_parts,
+        )
+        if selected_empties:
+            selection_text += trf(" / {groups} Groups", groups=selected_empties)
+        layout.label(text=selection_text)
+        send = layout.row()
+        send.scale_y = 1.45
+        send.enabled = bool(selected) and context.mode == "OBJECT"
+        send.operator("rbx_mesh_sync.send_selected", text="Send Selected to Studio", icon="EXPORT")
+        _draw_last_result(layout)
+
+        pending = SERVER.pending_reverse
+        if pending is None:
+            layout.label(
+                text="Waiting for Studio" if settings.reverse_auto_apply else "No incoming selection",
+                icon="IMPORT",
+            )
+            return
+
+        is_csg_preview = bool(pending.document.get("csg"))
+        layout.label(
+            text=(
+                trf(
+                    "Incoming revision {revision}: {count} CSG nodes",
+                    revision=pending.revision,
+                    count=len(pending.document.get("csg", [])),
                 )
+                if is_csg_preview
+                else trf(
+                    "Incoming revision {revision}: {count} objects",
+                    revision=pending.revision,
+                    count=len(pending.document.get("objects", [])),
+                )
+            ),
+            icon="IMPORT",
+        )
+        if settings.reverse_auto_apply:
+            layout.label(text="Applying automatically (Undo available)", icon="TIME")
         else:
-            connection.label(text="Server stopped", icon="PAUSE")
-        transform = connection.box()
-        transform.label(text="Blender to Studio Transform")
-        row = transform.row(align=True)
+            layout.operator("rbx_mesh_sync.review_incoming", icon="VIEWZOOM")
+        if settings.reverse_pending_revision == pending.revision:
+            for conflict in settings.reverse_conflicts:
+                row = layout.row(align=True)
+                row.label(text=conflict.object_name, icon="ERROR")
+                row.prop(conflict, "resolution", text="")
+            row = layout.row(align=True)
+            row.operator("rbx_mesh_sync.apply_incoming", icon="CHECKMARK")
+            row.operator("rbx_mesh_sync.discard_incoming", icon="X")
+
+
+class RBX_PT_CreatePanel(Panel):
+    bl_idname = "RBX_PT_primitive_sync_create"
+    bl_label = "Create & Convert"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Roblox"
+    bl_parent_id = RBX_PT_MainPanel.bl_idname
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.rbx_primitive_sync
+        layout.label(
+            text=trf("Estimated Studio Parts: {count}", count=estimated_scene_part_count(context.scene)),
+            icon="INFO",
+        )
+        grid = layout.grid_flow(columns=2, even_columns=True, align=True)
+        for identifier, label, _description in PART_TYPE_ITEMS:
+            operator = grid.operator("rbx_primitive_sync.add_part", text=label)
+            operator.part_type = identifier
+
+        conversion = layout.box()
+        conversion.label(text="Convert Existing Meshes")
+        conversion.prop(settings, "conversion_type")
+        conversion.prop(settings, "conversion_tolerance")
+        conversion.prop(settings, "keep_conversion_backup")
+        conversion.operator("rbx_primitive_sync.convert_selected", icon="MODIFIER")
+
+
+class RBX_PT_ObjectPanel(Panel):
+    bl_idname = "RBX_PT_primitive_sync_object"
+    bl_label = "Selected Object"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Roblox"
+    bl_parent_id = RBX_PT_MainPanel.bl_idname
+
+    @classmethod
+    def poll(cls, context):
+        return bool(
+            context.active_object
+            and context.active_object.type in {"MESH", "EMPTY"}
+            and hasattr(context.active_object, "rbx_primitive_sync")
+        )
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        settings = obj.rbx_primitive_sync
+        if obj.type == "EMPTY":
+            layout.label(text="Studio Type: Model / Folder", icon="OUTLINER_OB_EMPTY")
+            layout.prop(settings, "empty_export_mode")
+            layout.label(text="Selecting this group sends its enabled descendants.", icon="INFO")
+            return
+
+        if settings.is_roblox_part:
+            layout.label(text=trf("Studio Type: Part ({part_type})", part_type=settings.part_type), icon="MESH_CUBE")
+            layout.prop(settings, "sync_enabled")
+            layout.prop(settings, "material")
+            layout.prop(settings, "color")
+            layout.prop(settings, "transparency")
+            if settings.part_type == "Tube":
+                tube = layout.box()
+                tube.label(text="Tube Approximation")
+                tube.prop(settings, "tube_inner_ratio")
+                tube.prop(settings, "tube_segments")
+                count = estimated_tube_part_count(settings.tube_segments)
+                tube.label(text=trf("Studio Parts: {count} WedgeParts", count=count), icon="INFO")
+                if count > 128:
+                    tube.label(text="High Part count", icon="ERROR")
+        else:
+            layout.label(text="Studio Type: MeshPart", icon="MESH_DATA")
+            layout.prop(settings, "mesh_sync_enabled")
+            layout.prop(settings, "mesh_use_roblox_material")
+            if settings.mesh_use_roblox_material:
+                layout.prop(settings, "material")
+                layout.prop(settings, "color")
+            else:
+                layout.prop(settings, "mesh_blender_appearance_mode")
+            layout.prop(settings, "mesh_material_preview")
+            layout.prop(settings, "transparency")
+            layout.prop(settings, "collision_fidelity")
+        layout.prop(settings, "anchored")
+        if len([selected for selected in context.selected_objects if selected.type == "MESH"]) > 1:
+            layout.operator("rbx_mesh_sync.apply_settings", icon="PASTEDOWN")
+
+
+class RBX_PT_AppearancePanel(Panel):
+    bl_idname = "RBX_PT_mesh_sync_appearance"
+    bl_label = "Appearance & Optimization"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Roblox"
+    bl_parent_id = RBX_PT_MainPanel.bl_idname
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(context.active_object and context.active_object.type == "MESH")
+
+    def draw(self, context):
+        layout = self.layout
+        obj_settings = context.active_object.rbx_primitive_sync
+        scene_settings = context.scene.rbx_primitive_sync
+        layout.prop(scene_settings, "mesh_appearance_selection_scope")
+        layout.prop(scene_settings, "mesh_appearance_exclude_parts")
+        layout.operator("rbx_mesh_sync.select_same_appearance", icon="RESTRICT_SELECT_OFF")
+        merge_row = layout.row()
+        merge_row.enabled = bool(
+            not obj_settings.is_roblox_part
+            and len([obj for obj in context.selected_objects if obj.type == "MESH"]) > 1
+        )
+        merge_row.operator("rbx_mesh_sync.merge_to_active_appearance", icon="AUTOMERGE_ON")
+        layout.label(text="Merge uses Ctrl+J modifier behavior.", icon="INFO")
+        layout.operator("rbx_mesh_sync.refresh_material_preview", icon="MATERIAL")
+
+
+class RBX_PT_PhysicsPanel(Panel):
+    bl_idname = "RBX_PT_mesh_sync_physics"
+    bl_label = "Physics & Rendering"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Roblox"
+    bl_parent_id = RBX_PT_MainPanel.bl_idname
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(context.active_object and context.active_object.type == "MESH")
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.active_object.rbx_primitive_sync
+        layout.prop(settings, "can_collide")
+        layout.prop(settings, "can_touch")
+        layout.prop(settings, "can_query")
+        layout.prop(settings, "cast_shadow")
+
+
+class RBX_PT_TransferPanel(Panel):
+    bl_idname = "RBX_PT_mesh_sync_transfer"
+    bl_label = "Sync Settings"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Roblox"
+    bl_parent_id = RBX_PT_MainPanel.bl_idname
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.rbx_primitive_sync
+        layout.prop(settings, "model_name")
+        layout.prop(settings, "studs_per_unit")
+
+        connection = layout.box()
+        connection.label(text="Connection")
+        connection.prop(settings, "mesh_sync_port")
+
+        outgoing = layout.box()
+        outgoing.label(text="Blender to Studio")
+        row = outgoing.row(align=True)
         row.prop(settings, "mesh_sync_export_position", toggle=True)
         row.prop(settings, "mesh_sync_export_rotation", toggle=True)
         row.prop(settings, "mesh_sync_export_scale", toggle=True)
-        hierarchy = connection.box()
-        hierarchy.label(text="Blender to Studio Hierarchy")
-        hierarchy.prop(settings, "mesh_empty_export_mode")
-        result = SERVER.last_result
-        if isinstance(result, dict):
-            if result.get("ok"):
-                connection.label(
-                    text=f"Studio imported revision {result.get('revision', '?')}",
-                    icon="CHECKMARK",
-                )
-                connection.label(
-                    text=(
-                        f"Objects: {result.get('addedInstances', 0)} added / "
-                        f"{result.get('updatedInstances', 0)} updated"
-                    ),
-                )
-                connection.label(
-                    text=(
-                        f"Assets: {result.get('uploadedMeshes', 0) + result.get('uploadedImages', 0)} new / "
-                        f"{result.get('reusedMeshes', 0) + result.get('reusedImages', 0)} reused"
-                    ),
-                )
-            else:
-                stage = result.get("stage", "unknown stage")
-                connection.label(text=f"Studio failed during {stage}", icon="ERROR")
+        outgoing.prop(settings, "mesh_empty_export_mode")
 
         incoming = layout.box()
         incoming.label(text="Studio to Blender")
         incoming.prop(settings, "reverse_auto_apply")
         incoming.prop(settings, "reverse_preserve_hierarchy")
         incoming.prop(settings, "reverse_preserve_geometry")
-        topology = incoming.box()
-        topology.label(text="Reconstructed Studio Meshes")
-        topology.prop(settings, "reverse_mesh_topology")
-        topology.prop(settings, "reverse_merge_by_distance")
-        distance = topology.row()
+        incoming.prop(settings, "reverse_mesh_topology")
+        incoming.prop(settings, "reverse_merge_by_distance")
+        distance = incoming.row()
         distance.enabled = settings.reverse_merge_by_distance
         distance.prop(settings, "reverse_merge_distance")
         if not settings.reverse_preserve_geometry:
@@ -195,136 +334,39 @@ class RBX_PT_MeshSyncPanel(Panel):
             incoming.label(text=settings.reverse_auto_apply_error, icon="ERROR")
         if settings.reverse_last_warning:
             incoming.label(text=settings.reverse_last_warning, icon="INFO")
-        pending = SERVER.pending_reverse
-        if pending is None:
-            incoming.label(
-                text="Waiting; Studio sends apply immediately" if settings.reverse_auto_apply else "No incoming selection",
-                icon="IMPORT",
-            )
-        else:
-            incoming.label(
-                text=f"Revision {pending.revision}: {len(pending.document.get('objects', []))} objects",
-                icon="IMPORT",
-            )
-            if settings.reverse_auto_apply:
-                incoming.label(text="Applying automatically (Undo available)", icon="TIME")
-            else:
-                incoming.operator("rbx_mesh_sync.review_incoming", icon="VIEWZOOM")
-            if settings.reverse_pending_revision == pending.revision:
-                for conflict in settings.reverse_conflicts:
-                    row = incoming.row(align=True)
-                    row.label(text=conflict.object_name, icon="ERROR")
-                    row.prop(conflict, "resolution", text="")
-                row = incoming.row(align=True)
-                row.operator("rbx_mesh_sync.apply_incoming", icon="CHECKMARK")
-                row.operator("rbx_mesh_sync.discard_incoming", icon="X")
 
-        selected_meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
-        summary = layout.box()
-        selected_parts = sum(
-            1 for obj in selected_meshes
-            if obj.rbx_primitive_sync.is_roblox_part and obj.rbx_primitive_sync.sync_enabled
-        )
-        selected_mesh_parts = sum(
-            1 for obj in selected_meshes
-            if not obj.rbx_primitive_sync.is_roblox_part and obj.rbx_primitive_sync.mesh_sync_enabled
-        )
-        summary.label(text=f"Selected: {selected_parts} Parts / {selected_mesh_parts} MeshParts")
+
+class RBX_PT_AdvancedPanel(Panel):
+    bl_idname = "RBX_PT_mesh_sync_advanced"
+    bl_label = "Advanced"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Roblox"
+    bl_parent_id = RBX_PT_MainPanel.bl_idname
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
         active_mesh = context.active_object if context.active_object and context.active_object.type == "MESH" else None
-        link_row = summary.row()
+        link_row = layout.row()
         link_row.enabled = bool(
             context.mode == "OBJECT"
             and active_mesh
             and any(obj.type == "MESH" and obj != active_mesh for obj in context.selected_objects)
         )
         link_row.operator("rbx_mesh_sync.link_mesh_data", icon="LINKED")
-        if active_mesh and len(selected_meshes) > 1:
-            summary.label(text=f"Link target: active object '{active_mesh.name}'", icon="INFO")
-            summary.label(text="Also shares UVs, vertex colors, and materials.")
-        row = summary.row()
-        row.scale_y = 1.35
-        row.enabled = bool(selected_meshes)
-        row.operator("rbx_mesh_sync.send_selected", icon="EXPORT")
-        summary.label(text="Studio must be connected before sending.", icon="INFO")
-
-
-class RBX_PT_MeshSyncObjectPanel(Panel):
-    bl_idname = "RBX_PT_mesh_sync_object"
-    bl_label = "Selected Mesh Settings"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Roblox"
-    bl_parent_id = RBX_PT_MeshSyncPanel.bl_idname
-
-    @classmethod
-    def poll(cls, context):
-        return bool(
-            context.active_object
-            and context.active_object.type == "MESH"
-            and hasattr(context.active_object, "rbx_primitive_sync")
-        )
-
-    def draw(self, context):
-        layout = self.layout
-        settings = context.active_object.rbx_primitive_sync
-        if settings.is_roblox_part:
-            layout.label(text=f"Studio Type: Part ({settings.part_type})", icon="MESH_CUBE")
-            layout.prop(settings, "sync_enabled")
-            layout.prop(settings, "material")
-            layout.prop(settings, "color")
-            layout.prop(settings, "transparency")
-        else:
-            layout.label(text="Studio Type: MeshPart", icon="MESH_DATA")
-            layout.prop(settings, "mesh_sync_enabled")
-            layout.prop(settings, "mesh_use_roblox_material")
-            if settings.mesh_use_roblox_material:
-                roblox_box = layout.box()
-                roblox_box.prop(settings, "material")
-                roblox_box.prop(settings, "color")
-            else:
-                layout.prop(settings, "mesh_blender_appearance_mode")
-            layout.prop(settings, "mesh_material_preview")
-            layout.prop(settings, "transparency")
-        layout.operator("rbx_mesh_sync.refresh_material_preview", icon="MATERIAL")
-        if not settings.is_roblox_part:
-            layout.prop(settings, "collision_fidelity")
-        layout.prop(settings, "anchored")
-
-        collision = layout.box()
-        collision.label(text="Collision and Rendering")
-        collision.prop(settings, "can_collide")
-        collision.prop(settings, "can_touch")
-        collision.prop(settings, "can_query")
-        collision.prop(settings, "cast_shadow")
-        if len([obj for obj in context.selected_objects if obj.type == "MESH"]) > 1:
-            layout.operator("rbx_mesh_sync.apply_settings", icon="PASTEDOWN")
-
-
-class RBX_PT_MeshSyncEmptyPanel(Panel):
-    bl_idname = "RBX_PT_mesh_sync_empty"
-    bl_label = "Selected Empty Settings"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Roblox"
-    bl_parent_id = RBX_PT_MeshSyncPanel.bl_idname
-
-    @classmethod
-    def poll(cls, context):
-        return bool(
-            context.active_object
-            and context.active_object.type == "EMPTY"
-            and hasattr(context.active_object, "rbx_primitive_sync")
-        )
-
-    def draw(self, context):
-        self.layout.prop(context.active_object.rbx_primitive_sync, "empty_export_mode")
+        layout.operator("rbx_primitive_sync.validate_scene", icon="CHECKMARK")
+        layout.operator("rbx_primitive_sync.repair_guids", icon="FILE_REFRESH")
+        layout.operator("rbx_primitive_sync.export_json", text="Export Legacy JSON", icon="EXPORT")
 
 
 CLASSES = (
     RBX_MT_AddMenu,
     RBX_PT_MainPanel,
+    RBX_PT_CreatePanel,
     RBX_PT_ObjectPanel,
-    RBX_PT_MeshSyncPanel,
-    RBX_PT_MeshSyncObjectPanel,
-    RBX_PT_MeshSyncEmptyPanel,
+    RBX_PT_AppearancePanel,
+    RBX_PT_PhysicsPanel,
+    RBX_PT_TransferPanel,
+    RBX_PT_AdvancedPanel,
 )

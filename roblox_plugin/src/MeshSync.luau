@@ -11,7 +11,8 @@ local PREVIOUS_SCHEMA_ID = "roblox-mesh-sync/3"
 local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
-local PLUGIN_VERSION = "0.10.7"
+local CSG_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/4"
+local PLUGIN_VERSION = "0.11.0"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -161,9 +162,9 @@ local function makeUi(plugin)
 		false,
 		false,
 		360,
+		435,
 		390,
-		390,
-		360
+		405
 	)
 	local widget = plugin:CreateDockWidgetPluginGuiAsync("RobloxMeshSyncWidgetV1", widgetInfo)
 	widget.Title = `Blender Mesh Sync {PLUGIN_VERSION}`
@@ -342,7 +343,7 @@ local function makeUi(plugin)
 	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 	statusLabel.TextYAlignment = Enum.TextYAlignment.Top
 	statusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-	statusLabel.LayoutOrder = 9
+	statusLabel.LayoutOrder = 10
 	statusLabel.Parent = root
 
 	toolbarButton.Click:Connect(function()
@@ -675,12 +676,12 @@ function MeshSync.start(plugin)
 		return hash
 	end
 
-	local function serializeEditableMesh(part: MeshPart, meshes, meshBlobs): (string, Vector3)
+	local function serializeEditableMesh(part: BasePart, content: Content, meshes, meshBlobs): (string, Vector3)
 		local ok, editableOrError = pcall(function()
-			return AssetService:CreateEditableMeshAsync(part.MeshContent, { FixedSize = true })
+			return AssetService:CreateEditableMeshAsync(content, { FixedSize = true })
 		end)
 		if not ok or not editableOrError then
-			error(`Could not read mesh {part:GetFullName()}. The logged-in Studio user or experience must own the asset or have explicit asset permission: {tostring(editableOrError)}`)
+			error(`{part:GetFullName()} のメッシュは所有権または共有権限の関係で読み取れません: {tostring(editableOrError)}`)
 		end
 		local editable = editableOrError
 		local vertexIds = editable:GetVertices()
@@ -735,6 +736,12 @@ function MeshSync.start(plugin)
 		local raw = HttpService:JSONEncode(payload)
 		local hash = sha256(raw)
 		if not meshes[hash] then
+			local sourceUri = nil
+			pcall(function()
+				if content.SourceType == Enum.ContentSourceType.Uri then
+					sourceUri = content.Uri
+				end
+			end)
 			meshes[hash] = {
 				hash = hash,
 				name = part.Name,
@@ -742,7 +749,7 @@ function MeshSync.start(plugin)
 				triangleCount = #triangles,
 				byteSize = #raw,
 				chunkCount = math.max(1, math.ceil(#raw / CHUNK_BYTES)),
-				sourceUri = if part.MeshContent.SourceType == Enum.ContentSourceType.Uri then part.MeshContent.Uri else nil,
+				sourceUri = sourceUri,
 			}
 			meshBlobs[hash] = raw
 		end
@@ -760,7 +767,7 @@ function MeshSync.start(plugin)
 		return nil
 	end
 
-	local function collectStudioSelection()
+	local function collectStudioSelection(excludedBaseParts: { [Instance]: boolean }?, allowEmpty: boolean?)
 		local roots = Selection:Get()
 		if #roots == 0 then error("Select at least one Part, MeshPart, Model, or Folder") end
 		local function generatedDocumentRoot(instance: Instance): Instance?
@@ -807,7 +814,7 @@ function MeshSync.start(plugin)
 			local isContainer = instance:IsA("Model") or instance:IsA("Folder")
 			if isContainer then
 				table.insert(hierarchyInstances, instance)
-			elseif instance:IsA("BasePart") then
+			elseif instance:IsA("BasePart") and not (excludedBaseParts and excludedBaseParts[instance]) then
 				table.insert(parts, instance)
 			end
 			-- A selected Model/Folder can contain exportable geometry below
@@ -839,7 +846,7 @@ function MeshSync.start(plugin)
 				ancestor = ancestor.Parent
 			end
 		end
-		if #parts == 0 then error("Selection contains no supported Parts or MeshParts") end
+		if #parts == 0 and not allowEmpty then error("Selection contains no supported Parts or MeshParts") end
 
 		local hierarchyIds, seenHierarchyIds = {}, {}
 		for _, instance in hierarchyInstances do
@@ -989,9 +996,8 @@ function MeshSync.start(plugin)
 				record.geometryChanged = geometryOwner == "BLENDER" and sourceAssetId ~= nil
 					and assetId ~= nil and sourceAssetId ~= assetId
 				local cachedError = unreadableMeshSources[source]
-				if cachedError and geometryOwner ~= "BLENDER" then
-					recordSkip(part, "Unreadable MeshPart", cachedError, source, assetId)
-					continue
+				if cachedError then
+					error(`{part:GetFullName()} のMeshPartは所有権または共有権限の関係で読み取れないため、Blenderへ送信しません: {cachedError}`)
 				end
 				local stagedMeshes, stagedMeshBlobs = {}, {}
 				local stagedImages, stagedImageBlobs, stagedAppearances = {}, {}, {}
@@ -1000,7 +1006,7 @@ function MeshSync.start(plugin)
 					readable, meshHashOrError, meshSize = false, cachedError, nil
 				else
 					readable, meshHashOrError, meshSize = pcall(function()
-						return serializeEditableMesh(part, stagedMeshes, stagedMeshBlobs)
+						return serializeEditableMesh(part, part.MeshContent, stagedMeshes, stagedMeshBlobs)
 					end)
 				end
 				local appearanceReadable, appearanceHashOrError = pcall(function()
@@ -1017,11 +1023,10 @@ function MeshSync.start(plugin)
 				else
 					record.appearanceAvailable = true
 				end
-				if not readable and geometryOwner ~= "BLENDER" then
+				if not readable then
 					local reason = tostring(meshHashOrError)
 					unreadableMeshSources[source] = reason
-					recordSkip(part, "Unreadable MeshPart", reason, source, assetId)
-					continue
+					error(`{part:GetFullName()} のMeshPartは所有権または共有権限の関係で読み取れないため、Blenderへ送信しません: {reason}`)
 				end
 				if readable then
 					mergeRecords(meshes, stagedMeshes)
@@ -1081,7 +1086,7 @@ function MeshSync.start(plugin)
 				.. (if group.assetId then ` (Asset ID {group.assetId})` else "")
 				.. `. Reason: {group.error}`)
 		end
-		if #objects == 0 then
+		if #objects == 0 and not allowEmpty then
 			if #skippedObjects > 0 then
 				local first = skippedObjects[1]
 				error(`All {#skippedObjects} selected objects were unreadable or unsupported. First: {first.path}`
@@ -1119,7 +1124,7 @@ function MeshSync.start(plugin)
 			meshes = values(meshes),
 			images = values(images),
 			appearances = values(appearances),
-		}, meshBlobs, imageBlobs, skippedObjects, propertyOnlyWarnings
+		}, meshBlobs, imageBlobs, skippedObjects, propertyOnlyWarnings, hierarchyIds
 	end
 
 	local function sendSelectionToBlender()
@@ -1157,7 +1162,570 @@ function MeshSync.start(plugin)
 		end, debug.traceback)
 		if ok then setStatus(message, false) else
 			warn("Studio to Blender Mesh Sync failed:\n" .. tostring(message))
-			setStatus("Export failed. Outputを確認してください。", true)
+			if string.find(tostring(message), "所有権または共有権限") then
+				setStatus("メッシュを所有権または共有権限の関係で送れません。Blenderには送信していません。", true)
+			else
+				setStatus("Export failed. Outputを確認してください。", true)
+			end
+		end
+	end
+
+	local function sendCsgSelectionToBlender(selectedOperations: { Instance }?, ordinaryTransfer: any?)
+		local selectionBefore = Selection:Get()
+		local operations = selectedOperations or {}
+		if not selectedOperations then
+			for _, instance in selectionBefore do
+				if instance:IsA("UnionOperation") or instance:IsA("IntersectOperation") then
+					table.insert(operations, instance)
+				end
+			end
+		end
+		if #operations == 0 then
+			setStatus("UnionまたはIntersectを直接選択してください。", true)
+			return
+		end
+		local hierarchyIds = if ordinaryTransfer then ordinaryTransfer.hierarchyIds else nil
+		local function operationHierarchy(original: Instance)
+			local modelParent = original.Parent
+			while modelParent and (not hierarchyIds or not hierarchyIds[modelParent] or not modelParent:IsA("Model")) do
+				modelParent = modelParent.Parent
+			end
+			local folderParent = original.Parent
+			while folderParent and (not hierarchyIds or not hierarchyIds[folderParent] or not folderParent:IsA("Folder")) do
+				folderParent = folderParent.Parent
+			end
+			local parentId = if modelParent and hierarchyIds then hierarchyIds[modelParent] else nil
+			local primaryCollectionId = if folderParent and hierarchyIds then hierarchyIds[folderParent] else nil
+			return parentId, primaryCollectionId,
+				if primaryCollectionId then { primaryCollectionId } else {}
+		end
+
+		local recording = nil
+		local temporaryFolder = nil
+		local stats = {
+			separatePassed = 0,
+			negatePassed = 0,
+			failures = 0,
+			nodes = 0,
+		}
+		local phase1Document = {
+			schema = "roblox-mesh-sync-csg-phase1/1",
+			generator = { name = "Roblox Primitive Sync", version = PLUGIN_VERSION },
+			roots = {},
+			instances = {},
+			csg = {},
+			meshes = {},
+			meshBlobs = {},
+		}
+		local sourceGuids = {}
+		for _, operation in operations do
+			local sourceGuid = operation:GetAttribute("BlenderObjectId")
+			if type(sourceGuid) ~= "string" or sourceGuid == "" then
+				sourceGuid = HttpService:GenerateGUID(false)
+			end
+			sourceGuids[operation] = sourceGuid
+		end
+		local function pass(message: string)
+			print(`[Blender Mesh Sync][Union Phase 1][PASS] {message}`)
+		end
+		local function fail(message: string)
+			stats.failures += 1
+			stats.lastFailure = message
+			warn(`[Blender Mesh Sync][Union Phase 1][FAIL] {message}`)
+		end
+		local function propertyText(instance: Instance, propertyName: string): string
+			local readable, value = pcall(function()
+				return (instance :: any)[propertyName]
+			end)
+			if readable then return tostring(value) end
+			return `<unavailable: {value}>`
+		end
+		local function describe(instance: Instance, prefix: string)
+			print(`[Blender Mesh Sync][Union Phase 1] {prefix}`
+				.. ` ClassName={instance.ClassName}`
+				.. ` Name={instance.Name}`
+				.. ` Shape={propertyText(instance, "Shape")}`
+				.. ` Size={propertyText(instance, "Size")}`
+				.. ` CFrame={propertyText(instance, "CFrame")}`
+				.. ` TriangleCount={propertyText(instance, "TriangleCount")}`)
+			for _, child in instance:GetChildren() do
+				if child:IsA("DataModelMesh") then
+					print(`[Blender Mesh Sync][Union Phase 1] {prefix}`
+						.. ` DataModelMesh={child.ClassName}`
+						.. ` Scale={propertyText(child, "Scale")}`
+						.. ` Offset={propertyText(child, "Offset")}`)
+				end
+			end
+		end
+		local function pluginResults(value: any, operationName: string): { Instance }?
+			if typeof(value) == "Instance" then return { value } end
+			if type(value) ~= "table" then
+				fail(`plugin:{operationName} returned {typeof(value)}, not an Instance array`)
+				return nil
+			end
+			local instances = {}
+			for index, item in value do
+				if typeof(item) ~= "Instance" then
+					fail(`plugin:{operationName} result {index} is {typeof(item)}, not an Instance`)
+				else
+					table.insert(instances, item)
+				end
+			end
+			return instances
+		end
+		local function addLeaf(instance: Instance): any?
+			if not instance:IsA("BasePart") then
+				fail(`separated operand {instance.Name} is {instance.ClassName}, not a BasePart`)
+				return nil
+			end
+			local part = instance :: BasePart
+			local dataModelMesh = part:FindFirstChildWhichIsA("DataModelMesh")
+			local meshData = if dataModelMesh then dataModelMesh :: any else nil
+			local specialMeshType = nil
+			local isExternalSpecialMesh = false
+			if dataModelMesh and dataModelMesh:IsA("SpecialMesh") then
+				specialMeshType = meshData.MeshType.Name
+				isExternalSpecialMesh = meshData.MeshType == Enum.MeshType.FileMesh
+			elseif dataModelMesh and dataModelMesh:IsA("FileMesh") then
+				specialMeshType = "FileMesh"
+				isExternalSpecialMesh = true
+			end
+			local kind = if part:IsA("MeshPart") or isExternalSpecialMesh then "MESH" else "PART"
+			local primitiveType = if kind == "PART" then partType(part) else nil
+			if dataModelMesh then
+				if dataModelMesh:IsA("BlockMesh") then
+					primitiveType = "Block"
+				elseif dataModelMesh:IsA("CylinderMesh") then
+					primitiveType = "Cylinder"
+				elseif specialMeshType then
+					local builtInTypes = {
+						Brick = "Block",
+						Sphere = "Ball",
+						Cylinder = "Cylinder",
+						Wedge = "Wedge",
+						CornerWedge = "CornerWedge",
+					}
+					if specialMeshType ~= "FileMesh" then
+						primitiveType = builtInTypes[specialMeshType]
+						if not primitiveType then
+							fail(`SpecialMesh {part:GetFullName()} のMeshType={specialMeshType}は現在正確に再現できないため、Blenderへ送信しません。`)
+							return nil
+						end
+					end
+				end
+			end
+			if kind == "PART" and not primitiveType then
+				fail(`separated operand {part.Name} has unsupported class {part.ClassName}`)
+				return nil
+			end
+			local id = HttpService:GenerateGUID(false)
+			local record = {
+				id = id,
+				name = part.Name,
+				kind = kind,
+				className = part.ClassName,
+				partType = primitiveType,
+				size = { part.Size.X, part.Size.Y, part.Size.Z },
+				cframe = cframeArray(part.CFrame),
+				material = part.Material.Name,
+				color = { part.Color.R, part.Color.G, part.Color.B },
+				transparency = part.Transparency,
+				anchored = part.Anchored,
+				canCollide = part.CanCollide,
+				canTouch = part.CanTouch,
+				canQuery = part.CanQuery,
+				castShadow = part.CastShadow,
+				geometryOwner = "STUDIO",
+				geometryAvailable = kind == "PART",
+			}
+			if dataModelMesh then
+				record.dataModelMeshClass = dataModelMesh.ClassName
+				record.specialMeshType = specialMeshType
+				record.meshScale = {
+					meshData.Scale.X,
+					meshData.Scale.Y,
+					meshData.Scale.Z,
+				}
+				record.meshOffset = {
+					meshData.Offset.X,
+					meshData.Offset.Y,
+					meshData.Offset.Z,
+				}
+			end
+			if kind == "MESH" then
+				local content = nil
+				if part:IsA("MeshPart") then
+					content = (part :: MeshPart).MeshContent
+				elseif meshData then
+					local contentReadable, meshContent = pcall(function()
+						return meshData.MeshContent
+					end)
+					if contentReadable then content = meshContent end
+					local hasMeshContent = false
+					if content then
+						pcall(function()
+							hasMeshContent = content.SourceType ~= Enum.ContentSourceType.None
+						end)
+					end
+					if not hasMeshContent then
+						local meshId = tostring(meshData.MeshId)
+						if meshId ~= "" then content = Content.fromUri(meshId) end
+					end
+				end
+				local readable, meshHashOrError, meshSize = pcall(function()
+					if not content then error("mesh content is empty") end
+					return serializeEditableMesh(
+						part,
+						content,
+						phase1Document.meshes,
+						phase1Document.meshBlobs
+					)
+				end)
+				if not readable then
+					fail(`{part:GetFullName()} のメッシュは所有権または共有権限の関係で読み取れないため、Blenderへ送信しません: {tostring(meshHashOrError)}`)
+					return nil
+				end
+				record.meshHash = meshHashOrError
+				record.meshSize = { meshSize.X, meshSize.Y, meshSize.Z }
+				record.geometryAvailable = true
+				if isExternalSpecialMesh then
+					record.dataModelMeshAbsoluteScale = true
+				end
+			end
+			table.insert(phase1Document.instances, record)
+			return { kind = "instance", ref = id }
+		end
+
+		local inspectOperation
+		inspectOperation = function(operation: Instance, depth: number, displayName: string?): any?
+			stats.nodes += 1
+			if depth > 32 or stats.nodes > 256 then
+				fail("CSG nesting or operand count exceeded the Phase 1 safety limit")
+				return nil
+			end
+			local nodeId = HttpService:GenerateGUID(false)
+			local usePartColor = nil
+			pcall(function() usePartColor = (operation :: any).UsePartColor end)
+			local operationPart = operation :: BasePart
+			local node = {
+				id = nodeId,
+				name = displayName or operation.Name,
+				className = operation.ClassName,
+				op = if operation:IsA("IntersectOperation") then "intersect" else "union",
+				sourceGuid = operation:GetAttribute("BlenderObjectId"),
+				size = { operationPart.Size.X, operationPart.Size.Y, operationPart.Size.Z },
+				cframe = cframeArray(operationPart.CFrame),
+				appearance = {
+					material = operationPart.Material.Name,
+					color = { operationPart.Color.R, operationPart.Color.G, operationPart.Color.B },
+					transparency = operationPart.Transparency,
+				},
+				usePartColor = usePartColor,
+				physics = {
+					anchored = operationPart.Anchored,
+					canCollide = operationPart.CanCollide,
+					canTouch = operationPart.CanTouch,
+					canQuery = operationPart.CanQuery,
+					castShadow = operationPart.CastShadow,
+				},
+				operands = {},
+			}
+			table.insert(phase1Document.csg, node)
+			describe(operation, `depth={depth} operation before Separate:`)
+			local separated, rawChildren = pcall(function()
+				return plugin:Separate({ operation })
+			end)
+			if not separated then
+				fail(`plugin:Separate failed at depth {depth}: {rawChildren}`)
+				return nil
+			end
+			local children = pluginResults(rawChildren, "Separate")
+			if not children then return nil end
+			stats.separatePassed += 1
+			pass(`plugin:Separate returned {#children} operand(s) at depth {depth}`)
+			for index, child in children do
+				describe(child, `depth={depth} operand={index} after Separate:`)
+				if child:IsA("NegateOperation") then
+					local negated, rawRestored = pcall(function()
+						return plugin:Negate({ child })
+					end)
+					if not negated then
+						fail(`plugin:Negate failed for negative operand {index}: {rawRestored}`)
+						continue
+					end
+					local restored = pluginResults(rawRestored, "Negate")
+					if not restored then continue end
+					local restoredToSupportedOperand = false
+					for restoredIndex, restoredPart in restored do
+						describe(restoredPart, `depth={depth} negative={index} restored={restoredIndex}:`)
+						if restoredPart:IsA("UnionOperation") or restoredPart:IsA("IntersectOperation") then
+							local csgReference = inspectOperation(restoredPart, depth + 1, nil)
+							if csgReference then
+								csgReference.role = "negative"
+								table.insert(node.operands, csgReference)
+								restoredToSupportedOperand = true
+							end
+						else
+							local leafReference = addLeaf(restoredPart)
+							if leafReference then
+								leafReference.role = "negative"
+								table.insert(node.operands, leafReference)
+								restoredToSupportedOperand = true
+							end
+						end
+					end
+					if restoredToSupportedOperand then
+						stats.negatePassed += 1
+						pass(`plugin:Negate restored negative operand {index} to a supported Part or nested CSG operation`)
+					else
+						fail(`plugin:Negate did not restore negative operand {index} to a supported Part or nested CSG operation`)
+					end
+				elseif child:IsA("UnionOperation") or child:IsA("IntersectOperation") then
+					pass(`nested {child.ClassName} remained intact after separating its parent`)
+					local childReference = inspectOperation(child, depth + 1, nil)
+					if childReference then
+						childReference.role = "positive"
+						table.insert(node.operands, childReference)
+					end
+				else
+					local leafReference = addLeaf(child)
+					if leafReference then
+						leafReference.role = "positive"
+						table.insert(node.operands, leafReference)
+					end
+				end
+			end
+			return { kind = "csg", ref = nodeId }
+		end
+
+		local completed, testError = xpcall(function()
+			recording = ChangeHistoryService:TryBeginRecording("Blender CSG Phase 1 Tree Build")
+			if not recording then
+				error("Could not start ChangeHistoryService recording; finish the current Studio action and retry")
+			end
+			temporaryFolder = Instance.new("Folder")
+			temporaryFolder.Name = `__BlenderMeshSync_CSG_Phase1_{HttpService:GenerateGUID(false)}`
+			temporaryFolder.Parent = workspace
+			print("[Blender Mesh Sync][Union Phase 1] ===== TREE BUILD START =====")
+			print(`[Blender Mesh Sync][Union Phase 1] Building {#operations} selected operation tree(s) on clones only.`)
+			for index, original in operations do
+				local originalParent = original.Parent
+				local originalClassName = original.ClassName
+				local originalSize = original.Size
+				local originalCFrame = original.CFrame
+				describe(original, `source={index}:`)
+				local clone = original:Clone()
+				if not clone then error(`Could not clone {original:GetFullName()}`) end
+				clone:SetAttribute("BlenderObjectId", sourceGuids[original])
+				clone.Name = `Phase1Clone_{index}_{original.Name}`
+				clone.Parent = temporaryFolder
+				local rootReference = inspectOperation(clone, 0, original.Name)
+				if rootReference then
+					local parentId, primaryCollectionId, collectionIds = operationHierarchy(original)
+					table.insert(phase1Document.roots, {
+						name = original.Name,
+						sourceGuid = sourceGuids[original],
+						sourcePath = original:GetFullName(),
+						parentId = parentId,
+						primaryCollectionId = primaryCollectionId,
+						collectionIds = collectionIds,
+						kind = rootReference.kind,
+						ref = rootReference.ref,
+					})
+				end
+				if original.Parent == originalParent
+					and original.ClassName == originalClassName
+					and original.Size == originalSize
+					and original.CFrame == originalCFrame then
+					pass(`source {index} remained unchanged`)
+				else
+					fail(`source {index} changed unexpectedly`)
+				end
+			end
+		end, debug.traceback)
+
+		if temporaryFolder then
+			local cleaned, cleanupError = pcall(function() temporaryFolder:Destroy() end)
+			if cleaned then pass("temporary Workspace folder was destroyed")
+			else fail(`temporary folder cleanup failed: {cleanupError}`) end
+		end
+		local selectionRestored, selectionError = pcall(function() Selection:Set(selectionBefore) end)
+		if not selectionRestored then fail(`selection restore failed: {selectionError}`) end
+		if recording then
+			local cancelled, cancelError = pcall(function()
+				ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Cancel)
+			end)
+			if cancelled then pass("ChangeHistoryService recording was cancelled")
+			else fail(`ChangeHistoryService cancel failed: {cancelError}`) end
+		end
+		print(`[Blender Mesh Sync][Union Phase 1] ===== TREE BUILD END: CSG={#phase1Document.csg}, LEAVES={#phase1Document.instances}, Separate PASS={stats.separatePassed}, Negate PASS={stats.negatePassed}, FAIL={stats.failures} =====`)
+		if not completed then
+			warn("[Blender Mesh Sync][Union Phase 1] Tree build aborted:\n" .. tostring(testError))
+			setStatus("Union Phase 1を中断しました。Outputを確認してください。", true)
+		elseif stats.failures > 0 then
+			if stats.lastFailure and string.find(stats.lastFailure, "所有権または共有権限") then
+				setStatus("メッシュを所有権または共有権限の関係で送れません。Blenderには送信していません。", true)
+			else
+				setStatus(`Union Phase 1完了（失敗 {stats.failures}件）。Outputを確認してください。`, true)
+			end
+		else
+			local function values(dictionary)
+				local items = {}
+				for _, value in dictionary do table.insert(items, value) end
+				return items
+			end
+			local modelId = plugin:GetSetting("RobloxMeshSync.CsgReverseModelId.v1")
+			if type(modelId) ~= "string" or modelId == "" then
+				modelId = HttpService:GenerateGUID(false)
+				plugin:SetSetting("RobloxMeshSync.CsgReverseModelId.v1", modelId)
+			end
+			local ordinaryDocument = if ordinaryTransfer then ordinaryTransfer.document else nil
+			local combinedObjects = {}
+			if ordinaryDocument then
+				for _, record in ordinaryDocument.objects do table.insert(combinedObjects, record) end
+			end
+			for _, record in phase1Document.instances do table.insert(combinedObjects, record) end
+			local combinedMeshes = {}
+			if ordinaryDocument then
+				for _, record in ordinaryDocument.meshes do table.insert(combinedMeshes, record) end
+			end
+			for _, record in values(phase1Document.meshes) do table.insert(combinedMeshes, record) end
+			local reverseDocument = {
+				schema = CSG_REVERSE_SCHEMA_ID,
+				generator = phase1Document.generator,
+				model = if ordinaryDocument then ordinaryDocument.model else {
+					id = modelId,
+					name = if #operations == 1 then operations[1].Name else "Studio CSG Selection",
+					rootKind = "STUDIO_SELECTION",
+				},
+				transformMask = if ordinaryDocument then ordinaryDocument.transformMask else {
+					position = ui.positionToggle:GetAttribute("ChannelEnabled") ~= false,
+					rotation = ui.rotationToggle:GetAttribute("ChannelEnabled") ~= false,
+					scale = ui.scaleToggle:GetAttribute("ChannelEnabled") ~= false,
+				},
+				hierarchy = if ordinaryDocument then ordinaryDocument.hierarchy else {},
+				objects = combinedObjects,
+				meshes = combinedMeshes,
+				images = if ordinaryDocument then ordinaryDocument.images else {},
+				appearances = if ordinaryDocument then ordinaryDocument.appearances else {},
+				csg = phase1Document.csg,
+				csgRoots = phase1Document.roots,
+				csgPhase = 4,
+			}
+			print("[Blender Mesh Sync][Union Phase 4] ===== REVERSE/4 JSON =====")
+			print(HttpService:JSONEncode(reverseDocument))
+			print("[Blender Mesh Sync][Union Phase 4] ===== REVERSE/4 JSON END =====")
+			local sent, sendResult = xpcall(function()
+				local transferId = HttpService:GenerateGUID(false)
+				request("POST", "/v2/reverse/begin", HttpService:JSONEncode({
+					transferId = transferId,
+					document = reverseDocument,
+				}))
+				local combinedMeshBlobs = {}
+				if ordinaryTransfer then
+					for hash, raw in ordinaryTransfer.meshBlobs do combinedMeshBlobs[hash] = raw end
+				end
+				for hash, raw in phase1Document.meshBlobs do combinedMeshBlobs[hash] = raw end
+				for hash, raw in combinedMeshBlobs do
+					local chunkCount = math.max(1, math.ceil(#raw / CHUNK_BYTES))
+					for index = 0, chunkCount - 1 do
+						local first = index * CHUNK_BYTES + 1
+						local chunk = string.sub(raw, first, math.min(#raw, first + CHUNK_BYTES - 1))
+						request("POST", `/v2/reverse/blob/mesh/{hash}/{index}`, chunk, {
+							["Content-Type"] = "application/octet-stream",
+							["X-Roblox-Sync-Transfer"] = transferId,
+						})
+					end
+				end
+				if ordinaryTransfer then
+					for hash, raw in ordinaryTransfer.imageBlobs do
+						local chunkCount = math.max(1, math.ceil(#raw / CHUNK_BYTES))
+						for index = 0, chunkCount - 1 do
+							local first = index * CHUNK_BYTES + 1
+							local chunk = string.sub(raw, first, math.min(#raw, first + CHUNK_BYTES - 1))
+							request("POST", `/v2/reverse/blob/image/{hash}/{index}`, chunk, {
+								["Content-Type"] = "application/octet-stream",
+								["X-Roblox-Sync-Transfer"] = transferId,
+							})
+						end
+					end
+				end
+				return HttpService:JSONDecode(request("POST", "/v2/reverse/commit", HttpService:JSONEncode({
+					transferId = transferId,
+				})))
+			end, debug.traceback)
+			if sent then
+				for _, operation in operations do
+					operation:SetAttribute("BlenderObjectId", sourceGuids[operation])
+				end
+				print(`[Blender Mesh Sync][Union Phase 4][PASS] Sent incoming revision {sendResult.revision}`)
+				setStatus(`Union Phase 4送信成功（Revision {sendResult.revision}、CSG {#phase1Document.csg}、リーフ {#phase1Document.instances}）。`, false)
+			else
+				warn("[Blender Mesh Sync][Union Phase 4] Send failed:\n" .. tostring(sendResult))
+				setStatus("Union Phase 4の送信に失敗しました。Outputを確認してください。", true)
+			end
+		end
+	end
+
+	local function sendCurrentSelectionToBlender()
+		local selected = Selection:Get()
+		if #selected == 0 then
+			setStatus("Blenderへ送るオブジェクトを選択してください。", true)
+			return
+		end
+
+		local baseParts = {}
+		local seenBaseParts = {}
+		local function includeBasePart(instance: Instance)
+			if instance:IsA("BasePart") and not seenBaseParts[instance] then
+				seenBaseParts[instance] = true
+				table.insert(baseParts, instance)
+			end
+		end
+		for _, instance in selected do
+			includeBasePart(instance)
+			if instance:IsA("Model") or instance:IsA("Folder") then
+				for _, descendant in instance:GetDescendants() do
+					includeBasePart(descendant)
+				end
+			end
+		end
+
+		local operations = {}
+		local ordinaryParts = {}
+		for _, part in baseParts do
+			if part:IsA("UnionOperation") or part:IsA("IntersectOperation") then
+				table.insert(operations, part)
+			else
+				table.insert(ordinaryParts, part)
+			end
+		end
+
+		if #operations == 0 then
+			sendSelectionToBlender()
+		else
+			local excludedOperations = {}
+			for _, operation in operations do excludedOperations[operation] = true end
+			local collected, document, meshBlobs, imageBlobs, skippedObjects, propertyOnlyWarnings, hierarchyIds = xpcall(function()
+				return collectStudioSelection(excludedOperations, true)
+			end, debug.traceback)
+			if not collected then
+				warn("Studio to Blender mixed selection failed:\n" .. tostring(document))
+				if string.find(tostring(document), "所有権または共有権限") then
+					setStatus("メッシュを所有権または共有権限の関係で送れません。Blenderには送信していません。", true)
+				else
+					setStatus("混在選択の送信準備に失敗しました。Outputを確認してください。", true)
+				end
+				return
+			end
+			sendCsgSelectionToBlender(operations, {
+				document = document,
+				meshBlobs = meshBlobs,
+				imageBlobs = imageBlobs,
+				skippedObjects = skippedObjects,
+				propertyOnlyWarnings = propertyOnlyWarnings,
+				hierarchyIds = hierarchyIds,
+			})
 		end
 	end
 
@@ -1478,7 +2046,15 @@ function MeshSync.start(plugin)
 		if transformMask.scale == false then part.Size = old.Size end
 	end
 
-	local function ensureHierarchy(rootFolder: Instance, hierarchy): { [string]: Instance }
+	-- Instance:Destroy() locks Parent to nil, so ChangeHistoryService cannot
+	-- restore that Instance during Undo.  DataModel removals performed inside an
+	-- import recording must only unparent the old Instance; Studio's undo record
+	-- retains it and can put the exact same object back.
+	local function removeUndoably(instance: Instance)
+		instance.Parent = nil
+	end
+
+	local function ensureHierarchy(rootFolder: Instance, hierarchy, protectedRootIds: { [string]: boolean }?): { [string]: Instance }
 		local existingById = {}
 		for _, descendant in rootFolder:GetDescendants() do
 			local nodeId = descendant:GetAttribute("BlenderHierarchyId")
@@ -1504,6 +2080,31 @@ function MeshSync.start(plugin)
 		end
 		local byId = {}
 		local processed = {}
+		local function protectedInstance(instance: Instance): boolean
+			if not protectedRootIds then return false end
+			for protectedId in protectedRootIds do
+				if byId[protectedId] == instance then return true end
+			end
+			return false
+		end
+		local function assignParent(current: Instance, parent: Instance)
+			if current == parent then
+				error("Blender hierarchy resolved one container as its own parent")
+			end
+			if parent:IsDescendantOf(current) then
+				-- Reversing an existing A > B relationship into B > A cannot be
+				-- performed in one Parent assignment: Studio rejects the temporary
+				-- cycle. Detach B first, then apply the requested relationship. A
+				-- selected complete-sync boundary is never moved, so preserve the
+				-- existing ancestor relationship if B is that protected boundary.
+				if protectedInstance(parent) then
+					warn(`[Blender Mesh Sync] Preserved complete-sync boundary {parent:GetFullName()} to avoid a circular hierarchy move`)
+					return
+				end
+				parent.Parent = current.Parent or rootFolder
+			end
+			current.Parent = parent
+		end
 		local function resolvedParent(node): Instance
 			local ancestorId = node.parentId or node.primaryCollectionId
 			local visited = {}
@@ -1544,6 +2145,16 @@ function MeshSync.start(plugin)
 						progressed = true
 						continue
 					end
+					if protectedRootIds and protectedRootIds[nodeId] and current then
+						-- A selected complete-sync boundary represents an existing Studio
+						-- Model. Its children are mirrored, but the boundary Instance itself
+						-- must not be renamed, moved, replaced, or recreated.
+						byId[nodeId] = current
+						processed[nodeId] = true
+						table.remove(pending, index)
+						progressed = true
+						continue
+					end
 					local expectedClass = if studioMode == "FOLDER" then "Folder" else "Model"
 					if current == rootFolder then
 						if current.ClassName ~= expectedClass then
@@ -1562,7 +2173,7 @@ function MeshSync.start(plugin)
 						local replacement = Instance.new(expectedClass)
 						replacement.Parent = current.Parent
 						for _, child in current:GetChildren() do child.Parent = replacement end
-						current:Destroy()
+						removeUndoably(current)
 						current = replacement
 					end
 					if not current then current = Instance.new(expectedClass) end
@@ -1581,7 +2192,7 @@ function MeshSync.start(plugin)
 						current:SetAttribute("BlenderEmptyCFrame", emptyCFrame)
 						if current:IsA("Model") then current:PivotTo(emptyCFrame) end
 					end
-					current.Parent = parent
+					assignParent(current, parent)
 					byId[nodeId] = current
 					processed[nodeId] = true
 					table.remove(pending, index)
@@ -1655,10 +2266,81 @@ function MeshSync.start(plugin)
 			local images = expectTable(document.images, "images")
 			local appearances = expectTable(document.appearances, "appearances")
 			local instances = expectTable(document.instances, "instances")
+			local manifestIncomingIds = {}
+			for index, instanceData in instances do
+				local instanceId = expectString(instanceData.id, `instances[{index}].id`)
+				if manifestIncomingIds[instanceId] then error("Manifest contains duplicate instance IDs") end
+				manifestIncomingIds[instanceId] = true
+			end
+			local replacementIds = {}
+			for index, instanceData in instances do
+				for replacementIndex, replacementIdValue in expectTable(
+					instanceData.replacesObjectIds or {}, `instances[{index}].replacesObjectIds`
+				) do
+					local replacementId = expectString(replacementIdValue,
+						`instances[{index}].replacesObjectIds[{replacementIndex}]`)
+					if replacementId == instanceData.id or manifestIncomingIds[replacementId] then
+						error(`instances[{index}] cannot replace an object included in the same revision`)
+					end
+					if replacementIds[replacementId] then
+						error(`Replacement object ID {replacementId} is claimed more than once`)
+					end
+					replacementIds[replacementId] = true
+				end
+			end
 			local hierarchy = expectTable(document.hierarchy or {}, "hierarchy")
 			local hierarchyNodeById = {}
-			for _, node in hierarchy do
-				if type(node.id) == "string" then hierarchyNodeById[node.id] = node end
+			for index, value in hierarchy do
+				local node = expectTable(value, `hierarchy[{index}]`)
+				local nodeId = expectString(node.id, `hierarchy[{index}].id`)
+				if hierarchyNodeById[nodeId] then error("Manifest contains duplicate hierarchy IDs") end
+				if node.kind ~= "MODEL" and node.kind ~= "FOLDER" then
+					error(`hierarchy[{index}] has an unsupported kind`)
+				end
+				hierarchyNodeById[nodeId] = node
+			end
+			local hierarchyVisitState = {}
+			local function visitHierarchy(nodeId: string)
+				local state = hierarchyVisitState[nodeId]
+				if state == 1 then error("Manifest hierarchy contains a cycle") end
+				if state == 2 then return end
+				hierarchyVisitState[nodeId] = 1
+				local node = hierarchyNodeById[nodeId]
+				local dependencyId = node.parentId or node.primaryCollectionId
+				if dependencyId ~= nil then
+					dependencyId = expectString(dependencyId, `hierarchy parent of {nodeId}`)
+					if not hierarchyNodeById[dependencyId] then
+						error(`Hierarchy node {nodeId} references a missing parent {dependencyId}`)
+					end
+					visitHierarchy(dependencyId)
+				end
+				hierarchyVisitState[nodeId] = 2
+			end
+			for nodeId in hierarchyNodeById do
+				visitHierarchy(nodeId)
+			end
+			local replaceScopes = expectTable(document.replaceScopes or {}, "replaceScopes")
+			local replaceScopeIds = {}
+			local replaceScopePresentSourceIds = {}
+			for index, value in replaceScopes do
+				local scope = expectTable(value, `replaceScopes[{index}]`)
+				local hierarchyId = expectString(scope.hierarchyId, `replaceScopes[{index}].hierarchyId`)
+				if scope.mode ~= "REPLACE_DESCENDANTS" then
+					error(`replaceScopes[{index}] has an unsupported mode`)
+				end
+				local scopeNode = hierarchyNodeById[hierarchyId]
+				if not scopeNode or scopeNode.kind ~= "MODEL" then
+					error(`replaceScopes[{index}] must reference a Model hierarchy node`)
+				end
+				if replaceScopeIds[hierarchyId] then error("Manifest contains duplicate replace scopes") end
+				replaceScopeIds[hierarchyId] = true
+				local presentSourceIds = {}
+				for sourceIndex, sourceId in expectTable(scope.presentSourceObjectIds or {},
+					`replaceScopes[{index}].presentSourceObjectIds`) do
+					presentSourceIds[expectString(sourceId,
+						`replaceScopes[{index}].presentSourceObjectIds[{sourceIndex}]`)] = true
+				end
+				replaceScopePresentSourceIds[hierarchyId] = presentSourceIds
 			end
 			local transformMask = expectTable(document.transformMask or {}, "transformMask")
 			if #instances == 0 or #instances > MAX_INSTANCES then
@@ -1764,7 +2446,7 @@ function MeshSync.start(plugin)
 				error("Could not start Studio undo recording")
 			end
 			plugin:SetSetting(RECORDING_KEY, recording)
-			local addedInstances, updatedInstances = 0, 0
+			local addedInstances, updatedInstances, removedInstances = 0, 0, 0
 			progress.stage = "updating Workspace"
 			local commitOk, commitError = xpcall(function()
 				local modelId = expectString(modelData.id, "model.id")
@@ -1782,7 +2464,7 @@ function MeshSync.start(plugin)
 					rootFolder.Parent = workspace
 					if previousRoot then
 						for _, child in previousRoot:GetChildren() do child.Parent = rootFolder end
-						previousRoot:Destroy()
+						removeUndoably(previousRoot)
 					end
 				end
 				rootFolder.Name = expectString(modelData.name, "model.name")
@@ -1798,11 +2480,27 @@ function MeshSync.start(plugin)
 							or existingVariant:GetAttribute("GeneratedByBlenderSync") ~= true then
 							error(`MaterialService already contains an unrelated instance named {variantName}`)
 						end
-						existingVariant:Destroy()
+						removeUndoably(existingVariant)
 					end
 					variant.Parent = MaterialService
 				end
-				local hierarchyById = ensureHierarchy(rootFolder, hierarchy)
+				-- Complete-sync documents include ancestors above the selected Empty so
+				-- Studio knows where that boundary belongs. Those ancestors are context,
+				-- not update targets: moving one can accidentally try to put an outer
+				-- Model inside its own descendant. Protect the boundary and every
+				-- incoming ancestor while still mirroring descendants below it.
+				local protectedHierarchyIds = table.clone(replaceScopeIds)
+				for scopeId in replaceScopeIds do
+					local currentId = scopeId
+					local visited = {}
+					while currentId and not visited[currentId] do
+						visited[currentId] = true
+						protectedHierarchyIds[currentId] = true
+						local currentNode = hierarchyNodeById[currentId]
+						currentId = currentNode and (currentNode.parentId or currentNode.primaryCollectionId) or nil
+					end
+				end
+				local hierarchyById = ensureHierarchy(rootFolder, hierarchy, protectedHierarchyIds)
 				local existingById = {}
 				local existingParts = {}
 				for _, child in rootFolder:GetDescendants() do
@@ -1856,9 +2554,18 @@ function MeshSync.start(plugin)
 					part.Parent = targetParent or rootFolder
 					if old then
 						updatedInstances += 1
-						old:Destroy()
+						removeUndoably(old)
 					else
 						addedInstances += 1
+					end
+				end
+				for _, descendant in workspace:GetDescendants() do
+					if descendant:IsA("BasePart") then
+						local objectId = descendant:GetAttribute("BlenderObjectId")
+						if type(objectId) == "string" and replacementIds[objectId] and descendant.Parent then
+							removeUndoably(descendant)
+							removedInstances += 1
+						end
 					end
 				end
 				-- A logical Blender object can expand to many Parts (Tube). Remove only
@@ -1867,11 +2574,66 @@ function MeshSync.start(plugin)
 					if oldPart.Parent then
 						local oldId = oldPart:GetAttribute("BlenderObjectId")
 						local sourceId = oldPart:GetAttribute("BlenderSourceObjectId") or oldId
-						if incomingSourceIds[sourceId] and not incomingIds[oldId] then oldPart:Destroy() end
+						if incomingSourceIds[sourceId] and not incomingIds[oldId] then removeUndoably(oldPart) end
+					end
+				end
+				local incomingHierarchyIds = {}
+				for _, node in hierarchy do
+					if type(node.id) == "string" then incomingHierarchyIds[node.id] = true end
+				end
+				for scopeId in replaceScopeIds do
+					local scopeRoot = hierarchyById[scopeId]
+					local presentSourceIds = replaceScopePresentSourceIds[scopeId] or {}
+					if not scopeRoot or not scopeRoot:IsA("Model") then
+						error(`Complete sync scope {scopeId} could not resolve its existing Studio Model`)
+					end
+					-- Remove only geometry that previously participated in synchronization.
+					-- Studio-only Parts and non-geometry children have no BlenderObjectId
+					-- and are intentionally preserved.
+					for _, descendant in scopeRoot:GetDescendants() do
+						if descendant:IsA("BasePart") then
+							local objectId = descendant:GetAttribute("BlenderObjectId")
+							local sourceId = descendant:GetAttribute("BlenderSourceObjectId") or objectId
+							if type(objectId) == "string" and objectId ~= ""
+								and not incomingIds[objectId] and not presentSourceIds[sourceId]
+								and descendant.Parent then
+								removeUndoably(descendant)
+								removedInstances += 1
+							end
+						end
+					end
+					-- Remove vanished synchronized child containers only when they are
+					-- empty after geometry cleanup. Any Script, Light, Attachment, or
+					-- Studio-only Part therefore protects its container automatically.
+					local staleContainers = {}
+					for _, descendant in scopeRoot:GetDescendants() do
+						local hierarchyId = descendant:GetAttribute("BlenderHierarchyId")
+						if type(hierarchyId) == "string" and hierarchyId ~= ""
+							and not incomingHierarchyIds[hierarchyId]
+							and (descendant:IsA("Model") or descendant:IsA("Folder")) then
+							table.insert(staleContainers, descendant)
+						end
+					end
+					table.sort(staleContainers, function(first, second)
+						local function depth(instance: Instance): number
+							local result = 0
+							local current = instance.Parent
+							while current and current ~= scopeRoot do
+								result += 1
+								current = current.Parent
+							end
+							return result
+						end
+						return depth(first) > depth(second)
+					end)
+					for _, container in staleContainers do
+						if container.Parent and #container:GetChildren() == 0 then
+							removeUndoably(container)
+						end
 					end
 				end
 				local legacyGenerated = rootFolder:FindFirstChild("Generated Meshes")
-				if legacyGenerated and #legacyGenerated:GetChildren() == 0 then legacyGenerated:Destroy() end
+				if legacyGenerated and #legacyGenerated:GetChildren() == 0 then removeUndoably(legacyGenerated) end
 				-- Select only the Parts/MeshParts created or replaced by this revision.
 				-- Selecting the document root made ordinary move operations act on the
 				-- entire Blender file instead of the objects the user just sent.
@@ -1912,13 +2674,14 @@ function MeshSync.start(plugin)
 					instances = #instances,
 					addedInstances = addedInstances,
 					updatedInstances = updatedInstances,
+					removedInstances = removedInstances,
 					uploadedMeshes = uploadedMeshes,
 					reusedMeshes = reusedMeshes,
 					uploadedImages = uploadedImages,
 					reusedImages = reusedImages,
 				}))
 			end)
-			return `Revision {revision}: {addedInstances} added/{updatedInstances} updated | meshes {uploadedMeshes} new/{reusedMeshes} reused | images {uploadedImages} new/{reusedImages} reused`
+			return `Revision {revision}: {addedInstances} added/{updatedInstances} updated/{removedInstances} removed | meshes {uploadedMeshes} new/{reusedMeshes} reused | images {uploadedImages} new/{reusedImages} reused`
 		end, debug.traceback)
 		importing = false
 		if ok then
@@ -2062,7 +2825,7 @@ function MeshSync.start(plugin)
 			if not connected and not connect(false) then
 				return
 			end
-			sendSelectionToBlender()
+			sendCurrentSelectionToBlender()
 		end)
 	end)
 

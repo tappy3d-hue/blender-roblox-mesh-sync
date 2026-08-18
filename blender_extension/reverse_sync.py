@@ -11,11 +11,12 @@ from mathutils import Matrix, Vector
 
 from .core import reverse_position, reverse_rotation, reverse_size, rounded, srgb_color_to_linear
 from .geometry import create_mesh, mesh_signature
+from .i18n import tr, trf
 from .material_preview import (
     apply_object_material_override, refresh_object_preview, restore_object_preview,
 )
 from .mesh_sync_core import (
-    content_hash, hierarchy_parent_order, mesh_signature_payload, sha256_bytes,
+    content_hash, csg_evaluation_order, hierarchy_parent_order, mesh_signature_payload, sha256_bytes,
     validate_reverse_document,
 )
 from .mesh_sync_server import SERVER
@@ -38,6 +39,12 @@ DOCUMENT_ROOT_KIND_KEY = "rbx_mesh_document_root_kind"
 GEOMETRY_WARNING_KEY = "rbx_mesh_geometry_warning"
 APPEARANCE_AVAILABLE_KEY = "rbx_mesh_appearance_available"
 APPEARANCE_WARNING_KEY = "rbx_mesh_appearance_warning"
+CSG_SOURCE_KEY = "rbx_csg_source"
+CSG_NODE_ID_KEY = "rbx_csg_node_id"
+CSG_ROLE_KEY = "rbx_csg_role"
+CSG_COLLECTION_ROLE_KEY = "rbx_csg_collection_role"
+CSG_CUTTER_SCALE = 1.0001
+CSG_NEGATIVE_OPERATION = "DIFFERENCE"
 _AUTO_APPLY_FAILED_REVISION = 0
 
 
@@ -547,12 +554,25 @@ def _create_object(
     obj = bpy.data.objects.new(record.get("name", "StudioObject"), mesh)
     obj[OBJECT_GUID_KEY] = record["id"]
     obj.matrix_world = _matrix_from_cframe(record["cframe"], studs_per_unit)
-    desired = reverse_size(record["size"], studs_per_unit)
+    mesh_offset = record.get("meshOffset")
+    if isinstance(mesh_offset, (list, tuple)) and len(mesh_offset) == 3:
+        # DataModelMesh.Offset is expressed in the Part's unscaled local axes.
+        # The matrix has rotation/translation only at this point, so the offset
+        # rotates with the Part without being multiplied by DataModelMesh.Scale.
+        obj.matrix_world = obj.matrix_world @ Matrix.Translation(
+            reverse_position(mesh_offset, studs_per_unit)
+        )
+    mesh_scale = reverse_size(record.get("meshScale", (1.0, 1.0, 1.0)), 1.0)
     # Object.dimensions is a world-axis-aligned bounding box.  Once a Part is
     # rotated it no longer represents the local X/Y/Z size, which used to make
     # diagonal bars and latches grow unpredictably.  Scale against the native
     # mesh-space bounds instead (EditableMesh:GetSize for MeshParts).
     local = _native_local_dimensions(record, mesh, studs_per_unit)
+    if record.get("dataModelMeshAbsoluteScale"):
+        desired = tuple(local[index] * mesh_scale[index] for index in range(3))
+    else:
+        desired = reverse_size(record["size"], studs_per_unit)
+        desired = tuple(desired[index] * mesh_scale[index] for index in range(3))
     obj.scale = tuple(float(obj.scale[index]) * desired[index] / local[index] for index in range(3))
     appearance = appearances.get(record.get("appearanceHash"), {
         "mode": "MATERIAL",
@@ -815,6 +835,10 @@ def _ensure_hierarchy(
                 target.objects.link(empty)
         if node.get("cframe"):
             empty.matrix_world = _matrix_from_cframe(node["cframe"], context.scene.rbx_primitive_sync.studs_per_unit)
+        model = document.get("model", {})
+        empty[DOCUMENT_MODEL_GUID_KEY] = model.get("id", "")
+        empty[DOCUMENT_MODEL_NAME_KEY] = model.get("name", "Studio Selection")
+        empty[DOCUMENT_ROOT_KIND_KEY] = model.get("rootKind", "STUDIO_SELECTION")
         empties[node["id"]] = empty
     for node_id, empty in empties.items():
         if preserve_existing and empty not in new_empties:
@@ -824,10 +848,433 @@ def _ensure_hierarchy(
     return root, collections, empties
 
 
+def _ensure_csg_collection(parent, name, role, source=""):
+    collection = next((
+        item for item in bpy.data.collections
+        if item.get(CSG_COLLECTION_ROLE_KEY) == role
+        and (not source or item.get(CSG_SOURCE_KEY) == source)
+    ), None)
+    if collection is None:
+        collection = bpy.data.collections.new(name)
+        collection[CSG_COLLECTION_ROLE_KEY] = role
+        if source:
+            collection[CSG_SOURCE_KEY] = source
+    collection.name = name
+    if collection.name not in parent.children:
+        parent.children.link(collection)
+    return collection
+
+
+def _remove_legacy_csg_results_collections(context):
+    """Move old Phase 4 results into the scene root and remove their wrapper."""
+
+    scene_root = context.scene.collection
+    for legacy_results in tuple(bpy.data.collections):
+        if legacy_results.get(CSG_COLLECTION_ROLE_KEY) != "RESULTS_ROOT":
+            continue
+        for obj in tuple(legacy_results.objects):
+            if scene_root not in obj.users_collection:
+                scene_root.objects.link(obj)
+            legacy_results.objects.unlink(obj)
+        if not legacy_results.objects and not legacy_results.children:
+            bpy.data.collections.remove(legacy_results)
+
+
+def _bake_csg_result(context, result):
+    """Replace a live Boolean result with its evaluated standalone mesh."""
+
+    context.view_layer.update()
+    depsgraph = context.evaluated_depsgraph_get()
+    evaluated = result.evaluated_get(depsgraph)
+    baked_mesh = bpy.data.meshes.new_from_object(
+        evaluated,
+        preserve_all_data_layers=True,
+        depsgraph=depsgraph,
+    )
+    old_mesh = result.data
+    result.modifiers.clear()
+    result.data = baked_mesh
+    if old_mesh is not None and old_mesh.users == 0:
+        bpy.data.meshes.remove(old_mesh)
+
+
+def _apply_csg_pending(context, pending):
+    document = pending.document
+    validate_reverse_document(document)
+    mesh_payloads = {
+        record["hash"]: json.loads(pending.blobs[("mesh", record["hash"])].decode("utf-8"))
+        for record in document.get("meshes", [])
+    }
+    mesh_sources = {
+        record["hash"]: record.get("sourceUri", "")
+        for record in document.get("meshes", [])
+    }
+    image_by_hash = {
+        record["hash"]: _image_for(record, pending.blobs[("image", record["hash"])])
+        for record in document.get("images", [])
+    }
+    appearances = {item["hash"]: item for item in document.get("appearances", [])}
+    records = {item["id"]: item for item in document.get("objects", [])}
+    nodes = {item["id"]: item for item in document.get("csg", [])}
+    csg_operand_ids = {
+        operand["ref"]
+        for node in nodes.values()
+        for operand in node.get("operands", [])
+        if operand.get("kind") == "instance"
+    }
+    ordinary_records = [
+        record for record in document.get("objects", [])
+        if record["id"] not in csg_operand_ids
+    ]
+    evaluation_order = csg_evaluation_order(document)
+    settings = context.scene.rbx_primitive_sync
+    mesh_data_cache = {}
+    created_objects = []
+    created_collections = []
+    root_results = []
+    root_result_records = []
+    ordinary_results = []
+    ordinary_count = 0
+    old_objects = set()
+    scene_root = context.scene.collection
+
+    _remove_legacy_csg_results_collections(context)
+
+    master_operands = _ensure_csg_collection(
+        scene_root, "Roblox CSG Operands", "OPERANDS_ROOT",
+    )
+    master_operands.hide_render = True
+
+    def reachable_nodes(root_id):
+        reachable = set()
+
+        def visit(node_id):
+            if node_id in reachable:
+                return
+            reachable.add(node_id)
+            for operand in nodes[node_id].get("operands", []):
+                if operand.get("kind") == "csg":
+                    visit(operand["ref"])
+
+        visit(root_id)
+        return reachable
+
+    try:
+        for root_record in document.get("csgRoots", []):
+            source = root_record.get("sourceGuid") or root_record.get("sourcePath") or root_record["ref"]
+            existing_root = next((
+                obj for obj in bpy.data.objects
+                if obj.get(CSG_SOURCE_KEY) == source
+                and obj.get(CSG_ROLE_KEY) == "BAKED_RESULT"
+            ), None)
+            old_objects.update(
+                obj for obj in bpy.data.objects if obj.get(CSG_SOURCE_KEY) == source
+            )
+            root_name = root_record.get("name", nodes[root_record["ref"]].get("name", "Union"))
+            operand_collection = next((
+                item for item in bpy.data.collections
+                if item.get(CSG_COLLECTION_ROLE_KEY) == "OPERANDS"
+                and item.get(CSG_SOURCE_KEY) == source
+            ), None)
+            if operand_collection is None:
+                operand_collection = bpy.data.collections.new(f"{root_name} Operands")
+                operand_collection[CSG_COLLECTION_ROLE_KEY] = "OPERANDS"
+                operand_collection[CSG_SOURCE_KEY] = source
+                created_collections.append(operand_collection)
+            operand_collection.name = f"{root_name} Operands"
+            operand_collection.hide_render = True
+            if operand_collection.name not in master_operands.children:
+                master_operands.children.link(operand_collection)
+
+            leaf_objects = {}
+            node_objects = {}
+
+            def leaf_object(object_id):
+                obj = leaf_objects.get(object_id)
+                if obj is not None:
+                    return obj
+                record = records[object_id]
+                if record.get("kind") == "MESH" and not record.get("geometryAvailable", True):
+                    raise ValueError(
+                        f"{record.get('name', 'MeshPart')}: CSG MeshPart operand geometry is not available yet"
+                    )
+                obj = _create_object(
+                    record, mesh_payloads, mesh_sources, mesh_data_cache,
+                    appearances, image_by_hash, settings.studs_per_unit,
+                    topology_mode=settings.reverse_mesh_topology,
+                    merge_distance=(
+                        float(settings.reverse_merge_distance)
+                        if settings.reverse_merge_by_distance else 0.0
+                    ),
+                )
+                obj[CSG_SOURCE_KEY] = source
+                obj[CSG_ROLE_KEY] = "OPERAND"
+                operand_collection.objects.link(obj)
+                obj.hide_render = True
+                obj.hide_set(True)
+                leaf_objects[object_id] = obj
+                created_objects.append(obj)
+                return obj
+
+            def operand_object(operand):
+                if operand["kind"] == "instance":
+                    return leaf_object(operand["ref"])
+                return node_objects[operand["ref"]]
+
+            reachable = reachable_nodes(root_record["ref"])
+            for node_id in evaluation_order:
+                if node_id not in reachable:
+                    continue
+                node = nodes[node_id]
+                positives = [item for item in node["operands"] if item["role"] == "positive"]
+                negatives = [item for item in node["operands"] if item["role"] == "negative"]
+                base = operand_object(positives[0])
+                base_matrix_basis = base.matrix_basis.copy()
+                result = base.copy()
+                if base.get(CSG_ROLE_KEY) == "RESULT":
+                    # Chaining another Boolean onto a copy of an unapplied,
+                    # disconnected Boolean result can make Blender keep only
+                    # the component touched by the next cutter. Bake the child
+                    # node at this tree boundary; the original hidden child
+                    # result retains its own editable Exact modifier stack.
+                    context.view_layer.update()
+                    depsgraph = context.evaluated_depsgraph_get()
+                    evaluated_base = base.evaluated_get(depsgraph)
+                    result.data = bpy.data.meshes.new_from_object(
+                        evaluated_base,
+                        preserve_all_data_layers=True,
+                        depsgraph=depsgraph,
+                    )
+                    result.modifiers.clear()
+                else:
+                    result.data = base.data.copy()
+                result.matrix_basis = base_matrix_basis
+                result.name = node.get("name", "Union")
+                result[OBJECT_GUID_KEY] = node.get("sourceGuid") or node_id
+                result[CSG_NODE_ID_KEY] = node_id
+                result[CSG_SOURCE_KEY] = source
+                result[CSG_ROLE_KEY] = "RESULT"
+                operand_collection.objects.link(result)
+                created_objects.append(result)
+
+                positive_operation = "INTERSECT" if node.get("op") == "intersect" else "UNION"
+                for index, operand in enumerate(positives[1:], 1):
+                    modifier = result.modifiers.new(
+                        name=f"Roblox CSG {positive_operation.title()} {index}",
+                        type="BOOLEAN",
+                    )
+                    modifier.operation = positive_operation
+                    modifier.solver = "EXACT"
+                    modifier.object = operand_object(operand)
+                    modifier.show_expanded = False
+                for index, operand in enumerate(negatives, 1):
+                    source_operand = operand_object(operand)
+                    cutter = source_operand.copy()
+                    cutter.name = f"{node.get('name', 'Union')} Difference Cutter {index}"
+                    for key in (OBJECT_GUID_KEY,):
+                        if key in cutter:
+                            del cutter[key]
+                    cutter[CSG_SOURCE_KEY] = source
+                    cutter[CSG_ROLE_KEY] = "CUTTER"
+                    cutter.scale = tuple(
+                        float(value) * CSG_CUTTER_SCALE for value in source_operand.scale
+                    )
+                    operand_collection.objects.link(cutter)
+                    cutter.hide_render = True
+                    cutter.hide_set(True)
+                    created_objects.append(cutter)
+                    modifier = result.modifiers.new(
+                        name=f"Roblox CSG Difference {index}",
+                        type="BOOLEAN",
+                    )
+                    modifier.operation = CSG_NEGATIVE_OPERATION
+                    modifier.solver = "EXACT"
+                    modifier.object = cutter
+                    modifier.show_expanded = False
+
+                physics = node.get("physics", {})
+                result_record = {
+                    "id": node.get("sourceGuid") or node_id,
+                    "kind": "MESH",
+                    "anchored": physics.get("anchored", True),
+                    "canCollide": physics.get("canCollide", True),
+                    "canTouch": physics.get("canTouch", True),
+                    "canQuery": physics.get("canQuery", True),
+                    "castShadow": physics.get("castShadow", True),
+                }
+                _apply_settings(result, result_record, node.get("appearance", {}), image_by_hash)
+                result.rbx_primitive_sync.is_roblox_part = False
+                result.rbx_primitive_sync.sync_enabled = False
+                result.rbx_primitive_sync.mesh_sync_enabled = True
+                result.hide_render = True
+                result.hide_set(True)
+                result.matrix_basis = base_matrix_basis
+                result.scale = tuple(float(value) for value in base.scale)
+                node_objects[node_id] = result
+
+            root_result = node_objects[root_record["ref"]]
+            if scene_root not in root_result.users_collection:
+                scene_root.objects.link(root_result)
+            if operand_collection in root_result.users_collection:
+                operand_collection.objects.unlink(root_result)
+            if root_record.get("sourceGuid"):
+                root_result[OBJECT_GUID_KEY] = root_record["sourceGuid"]
+            root_result.name = root_name
+            _bake_csg_result(context, root_result)
+            root_result[CSG_ROLE_KEY] = "BAKED_RESULT"
+            for key in (CSG_NODE_ID_KEY,):
+                if key in root_result:
+                    del root_result[key]
+
+            temporary_objects = [
+                obj for obj in created_objects
+                if obj is not root_result and obj.get(CSG_SOURCE_KEY) == source
+            ]
+            for obj in temporary_objects:
+                created_objects.remove(obj)
+                try:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                except (ReferenceError, RuntimeError):
+                    pass
+            if operand_collection.name in bpy.data.collections:
+                if operand_collection in created_collections:
+                    created_collections.remove(operand_collection)
+                bpy.data.collections.remove(operand_collection)
+
+            root_result.hide_render = False
+            root_result.hide_set(False)
+            model = document.get("model", {})
+            root_result[DOCUMENT_MODEL_GUID_KEY] = model.get("id", "")
+            root_result[DOCUMENT_MODEL_NAME_KEY] = model.get("name", "Studio CSG Selection")
+            root_result[DOCUMENT_ROOT_KIND_KEY] = model.get("rootKind", "STUDIO_SELECTION")
+            root_result[LAST_LOCAL_STATE_KEY] = _local_state(root_result)
+            root_results.append(root_result)
+            root_result_records.append((root_record, root_result, existing_root, None))
+
+        if (
+            master_operands.name in bpy.data.collections
+            and not master_operands.objects
+            and not master_operands.children
+        ):
+            bpy.data.collections.remove(master_operands)
+        # Primitive meshes are shared across every CSG root in this document.
+        # Removing them while processing the first root invalidates the cache and
+        # breaks subsequent roots that reuse the same Block/Cylinder data.
+        for mesh in set(mesh_data_cache.values()):
+            try:
+                if mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+            except ReferenceError:
+                pass
+        if ordinary_records:
+            ordinary_count, ordinary_results = _apply_regular_pending(
+                context, pending, records=ordinary_records, complete=False,
+            )
+
+        preserve_hierarchy = bool(settings.reverse_preserve_hierarchy)
+        required_ids = _required_hierarchy_ids(
+            document, root_result_records, preserve_hierarchy,
+        )
+        needs_root = (
+            not preserve_hierarchy
+            or any(old is None for _record, _result, old, _bounds in root_result_records)
+        )
+        hierarchy_root, collections, empties = _ensure_hierarchy(
+            context,
+            document,
+            preserve_existing=preserve_hierarchy,
+            required_ids=required_ids,
+            needs_root=needs_root,
+        )
+        for record, result, old, _bounds in root_result_records:
+            if preserve_hierarchy and old is not None:
+                targets = tuple(old.users_collection) or (scene_root,)
+                for target in targets:
+                    if target not in result.users_collection:
+                        target.objects.link(result)
+                for collection in tuple(result.users_collection):
+                    if collection not in targets:
+                        collection.objects.unlink(result)
+                _set_parent_keep_world(result, old.parent)
+            else:
+                target = collections.get(record.get("primaryCollectionId"), hierarchy_root)
+                requested_targets = {target}
+                for collection_id in record.get("collectionIds", []):
+                    collection = collections.get(collection_id)
+                    if collection:
+                        requested_targets.add(collection)
+                for collection in requested_targets:
+                    if collection not in result.users_collection:
+                        collection.objects.link(result)
+                for collection in tuple(result.users_collection):
+                    if collection not in requested_targets:
+                        collection.objects.unlink(result)
+                _set_parent_keep_world(result, empties.get(record.get("parentId")))
+
+        for old in old_objects:
+            if old not in created_objects:
+                bpy.data.objects.remove(old, do_unlink=True)
+    except Exception:
+        for obj in reversed(created_objects):
+            try:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            except (ReferenceError, RuntimeError):
+                pass
+        for collection in reversed(created_collections):
+            if collection.name in bpy.data.collections and not collection.objects and not collection.children:
+                bpy.data.collections.remove(collection)
+        for mesh in set(mesh_data_cache.values()):
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        raise
+
+    for obj in context.selected_objects:
+        obj.select_set(False)
+    for result in root_results:
+        result.select_set(True)
+    for result in ordinary_results:
+        result.select_set(True)
+    if root_results:
+        context.view_layer.objects.active = root_results[-1]
+    elif ordinary_results:
+        context.view_layer.objects.active = ordinary_results[-1]
+    SERVER.complete_reverse(pending.revision)
+    settings.reverse_pending_revision = 0
+    settings.reverse_conflicts.clear()
+    settings.reverse_last_warning = ""
+    return len(root_results) + ordinary_count
+
+
 def review_pending(context):
     pending = SERVER.pending_reverse
     if pending is None:
-        raise ValueError("Studioからの保留中データはありません")
+        raise ValueError(tr("There is no pending data from Studio"))
+    if pending.document.get("csg"):
+        validate_reverse_document(pending.document)
+        settings = context.scene.rbx_primitive_sync
+        settings.reverse_pending_revision = pending.revision
+        settings.reverse_conflicts.clear()
+        csg_operand_ids = {
+            operand["ref"]
+            for node in pending.document.get("csg", [])
+            for operand in node.get("operands", [])
+            if operand.get("kind") == "instance"
+        }
+        ordinary_records = [
+            record for record in pending.document.get("objects", [])
+            if record["id"] not in csg_operand_ids
+        ]
+        for record in ordinary_records:
+            existing = _existing_object(record["id"])
+            if existing and _is_conflict(existing):
+                item = settings.reverse_conflicts.add()
+                item.object_id = record["id"]
+                item.object_name = existing.name
+                item.resolution = "KEEP_BLENDER"
+        return (
+            len(pending.document.get("csgRoots", [])) + len(ordinary_records),
+            len(settings.reverse_conflicts),
+        )
     settings = context.scene.rbx_primitive_sync
     settings.reverse_pending_revision = pending.revision
     settings.reverse_conflicts.clear()
@@ -841,11 +1288,8 @@ def review_pending(context):
     return len(pending.document.get("objects", [])), len(settings.reverse_conflicts)
 
 
-def apply_pending(context):
-    pending = SERVER.pending_reverse
+def _apply_regular_pending(context, pending, *, records=None, complete=True):
     settings = context.scene.rbx_primitive_sync
-    if pending is None or settings.reverse_pending_revision != pending.revision:
-        raise ValueError("先にReview Incomingを実行してください")
     validate_reverse_document(pending.document)
     resolutions = {item.object_id: item.resolution for item in settings.reverse_conflicts}
     mesh_payloads = {
@@ -873,7 +1317,7 @@ def apply_pending(context):
         if settings.reverse_merge_by_distance else 0.0
     )
     try:
-        for record in pending.document.get("objects", []):
+        for record in (records if records is not None else pending.document.get("objects", [])):
             if resolutions.get(record["id"]) == "KEEP_BLENDER":
                 continue
             old = _existing_object(record["id"])
@@ -971,11 +1415,24 @@ def apply_pending(context):
         obj[DOCUMENT_MODEL_NAME_KEY] = document_model.get("name", "Studio Selection")
         obj[DOCUMENT_ROOT_KIND_KEY] = document_model.get("rootKind", "STUDIO_SELECTION")
         obj[LAST_LOCAL_STATE_KEY] = _local_state(obj)
-    SERVER.complete_reverse(pending.revision)
-    settings.reverse_pending_revision = 0
-    settings.reverse_conflicts.clear()
+    if complete:
+        SERVER.complete_reverse(pending.revision)
+        settings.reverse_pending_revision = 0
+        settings.reverse_conflicts.clear()
     settings.reverse_last_warning = "; ".join(warnings[:3])
-    return len(staged)
+    return len(staged), [obj for _record, obj, _old, _preserved_bounds in staged]
+
+
+def apply_pending(context):
+    pending = SERVER.pending_reverse
+    settings = context.scene.rbx_primitive_sync
+    if pending is None or settings.reverse_pending_revision != pending.revision:
+        raise ValueError(tr("Run Review Incoming first"))
+    _remove_legacy_csg_results_collections(context)
+    if pending.document.get("csg"):
+        return _apply_csg_pending(context, pending)
+    count, _objects = _apply_regular_pending(context, pending)
+    return count
 
 
 def auto_apply_pending_timer():
@@ -1023,9 +1480,12 @@ class RBX_OT_ReverseReview(Operator):
         try:
             count, conflicts = review_pending(context)
         except (ValueError, KeyError, TypeError) as error:
-            self.report({"ERROR"}, str(error))
+            self.report({"ERROR"}, tr(str(error)))
             return {"CANCELLED"}
-        self.report({"INFO"}, f"{count} objects ready; {conflicts} local conflicts")
+        self.report({"INFO"}, trf(
+            "{count} objects ready; {conflicts} local conflicts",
+            count=count, conflicts=conflicts,
+        ))
         return {"FINISHED"}
 
 
@@ -1033,17 +1493,26 @@ class RBX_OT_ReverseApply(Operator):
     bl_idname = "rbx_mesh_sync.apply_incoming"
     bl_label = "Apply Studio Selection"
     bl_description = "Apply the reviewed Studio selection to Blender"
-    bl_options = {"REGISTER", "UNDO"}
+    # This operator is also invoked from a timer. Blender's automatic UNDO
+    # option can skip or double-register history in that context, so execute()
+    # creates exactly one explicit pre-import checkpoint instead.
+    bl_options = {"REGISTER"}
 
     def execute(self, context):
         try:
+            undo_result = bpy.ops.ed.undo_push(message="Before Studio Import")
+            if "FINISHED" not in undo_result:
+                raise RuntimeError("Could not create the pre-import Undo checkpoint")
             count = apply_pending(context)
+            undo_result = bpy.ops.ed.undo_push(message="Studio Import")
+            if "FINISHED" not in undo_result:
+                raise RuntimeError("Could not finalize the Studio import Undo checkpoint")
         except (ValueError, KeyError, TypeError, RuntimeError) as error:
             context.scene.rbx_primitive_sync.reverse_auto_apply_error = str(error)
-            self.report({"ERROR"}, str(error))
+            self.report({"ERROR"}, tr(str(error)))
             return {"CANCELLED"}
         context.scene.rbx_primitive_sync.reverse_auto_apply_error = ""
-        self.report({"INFO"}, f"Studioから{count}個のオブジェクトを適用しました")
+        self.report({"INFO"}, trf("Applied {count} objects from Studio", count=count))
         return {"FINISHED"}
 
 
@@ -1058,7 +1527,7 @@ class RBX_OT_ReverseDiscard(Operator):
         settings.reverse_pending_revision = 0
         settings.reverse_conflicts.clear()
         settings.reverse_auto_apply_error = ""
-        self.report({"INFO"}, "Studioからの保留中データを破棄しました")
+        self.report({"INFO"}, tr("Discarded the pending Studio data"))
         return {"FINISHED"}
 
 

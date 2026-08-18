@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 
 import bpy
-from mathutils import Matrix
+from mathutils import Euler, Matrix, Vector
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -360,3 +361,415 @@ ngon_mesh = reverse_sync._mesh_from_payload("Ngon", ngon_payload, 1.0, topology_
 assert len(ngon_mesh.polygons) == 1
 assert len(ngon_mesh.polygons[0].vertices) == 4
 print("REVERSE_TOPOLOGY_MODES_OK")
+
+# DataModelMesh metadata on separated CSG operands changes the actual Boolean
+# geometry even though the restored parent remains a plain Part.
+data_mesh_cache = {}
+data_mesh_object = reverse_sync._create_object(
+    {
+        "id": "block-mesh-part", "name": "BlockMesh Part", "kind": "PART",
+        "partType": "Block", "size": [2, 4, 6],
+        "cframe": [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "dataModelMeshClass": "BlockMesh",
+        "meshScale": [2, 0.5, 1.5], "meshOffset": [1, 2, 3],
+    },
+    {}, {}, data_mesh_cache, {}, {}, 1.0,
+)
+bpy.context.scene.collection.objects.link(data_mesh_object)
+bpy.context.view_layer.update()
+data_mesh_dimensions = tuple(round(value, 5) for value in data_mesh_object.dimensions)
+data_mesh_location = tuple(round(value, 5) for value in data_mesh_object.location)
+data_mesh_scale = tuple(round(value, 5) for value in data_mesh_object.scale)
+assert data_mesh_dimensions == (4.0, 9.0, 2.0), (data_mesh_dimensions, data_mesh_scale)
+assert data_mesh_location == (1.0, -3.0, 2.0), data_mesh_location
+bpy.data.objects.remove(data_mesh_object, do_unlink=True)
+for data_mesh in data_mesh_cache.values():
+    if data_mesh.users == 0:
+        bpy.data.meshes.remove(data_mesh)
+print("CSG_DATAMODELMESH_TRANSFORM_OK")
+
+special_sphere_cache = {}
+special_sphere = reverse_sync._create_object(
+    {
+        "id": "special-sphere", "name": "SpecialMesh Sphere", "kind": "PART",
+        "partType": "Ball", "size": [10, 4, 6],
+        "cframe": [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "dataModelMeshClass": "SpecialMesh", "specialMeshType": "Sphere",
+        "meshScale": [0.5, 2, 1], "meshOffset": [0, 0, 0],
+    },
+    {}, {}, special_sphere_cache, {}, {}, 1.0,
+)
+bpy.context.scene.collection.objects.link(special_sphere)
+bpy.context.view_layer.update()
+assert tuple(round(value, 5) for value in special_sphere.dimensions) == (5.0, 6.0, 8.0)
+bpy.data.objects.remove(special_sphere, do_unlink=True)
+for special_mesh in special_sphere_cache.values():
+    if special_mesh.users == 0:
+        bpy.data.meshes.remove(special_mesh)
+print("CSG_SPECIALMESH_SPHERE_OK")
+
+# reverse/4 CSG documents are evaluated and baked into one standalone Mesh.
+csg_transform = [100, 20, 30, 0, -1, 0, 1, 0, 0, 0, 0, 1]
+positive_transform = [100, 20, 30, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+inner_negative_transform = [98.93408, 20, 30, *csg_transform[3:]]
+outer_negative_transform = [100.76856, 20, 30, *csg_transform[3:]]
+csg_document = {
+    "schema": "roblox-mesh-sync-reverse/4",
+    "csgPhase": 3,
+    "model": {"id": "csg-model", "name": "Nested Union", "rootKind": "STUDIO_SELECTION"},
+    "transformMask": {"position": True, "rotation": True, "scale": True},
+    "hierarchy": [
+        {"id": "csg-folder", "name": "CSG Folder", "kind": "FOLDER"},
+        {
+            "id": "csg-model-node", "name": "CSG Model", "kind": "MODEL",
+            "primaryCollectionId": "csg-folder",
+        },
+    ], "meshes": [], "images": [], "appearances": [],
+    "objects": [
+        {
+            "id": "csg-positive", "name": "Positive", "kind": "PART", "partType": "Block",
+            "size": [4, 1, 2], "cframe": positive_transform,
+        },
+        {
+            "id": "csg-negative-inner", "name": "Inner Negative", "kind": "PART", "partType": "Block",
+            "size": [4, 1, 2], "cframe": inner_negative_transform,
+        },
+        {
+            "id": "csg-negative-outer", "name": "Outer Negative", "kind": "PART", "partType": "Block",
+            "size": [4, 1, 2], "cframe": outer_negative_transform,
+        },
+        {
+            "id": "mixed-ordinary", "name": "Mixed Ordinary Part", "kind": "PART", "partType": "Ball",
+            "size": [2, 3, 4], "cframe": [110, 20, 30, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+        },
+    ],
+    "csg": [
+        {
+            "id": "csg-inner", "name": "Inner Union", "op": "union",
+            "size": [1, 4, 2], "cframe": csg_transform,
+            "appearance": {"material": "Plastic", "color": [0.7, 0.7, 0.7], "transparency": 0},
+            "operands": [
+                {"role": "positive", "kind": "instance", "ref": "csg-positive"},
+                {"role": "negative", "kind": "instance", "ref": "csg-negative-inner"},
+            ],
+        },
+        {
+            "id": "csg-negative-group", "name": "Nested Negative Union", "op": "union",
+            "size": [1, 4, 2], "cframe": csg_transform,
+            "appearance": {"material": "Plastic", "color": [0.6, 0.6, 0.6], "transparency": 0},
+            "operands": [
+                {"role": "positive", "kind": "instance", "ref": "csg-negative-outer"},
+            ],
+        },
+        {
+            "id": "csg-outer", "name": "Outer Union", "op": "union",
+            "size": [1, 4, 2], "cframe": csg_transform,
+            "appearance": {"material": "Plastic", "color": [0.5, 0.6, 0.7], "transparency": 0},
+            "operands": [
+                {"role": "positive", "kind": "csg", "ref": "csg-inner"},
+                {"role": "negative", "kind": "csg", "ref": "csg-negative-group"},
+            ],
+        },
+    ],
+    "csgRoots": [{
+        "kind": "csg", "ref": "csg-outer", "name": "Outer Union",
+        "sourceGuid": "40000000-0000-4000-8000-000000000001",
+        "sourcePath": "Workspace.Test.OuterUnion",
+        "parentId": "csg-model-node",
+        "primaryCollectionId": "csg-folder",
+        "collectionIds": ["csg-folder"],
+    }],
+}
+reverse_sync.SERVER._pending_reverse = ReverseSnapshot(5, csg_document, {})
+reverse_sync.auto_apply_pending_timer()
+assert reverse_sync.SERVER.pending_reverse is None
+csg_result = next(
+    obj for obj in bpy.data.objects
+    if obj.get(reverse_sync.CSG_SOURCE_KEY) == "40000000-0000-4000-8000-000000000001"
+    and obj.get(reverse_sync.CSG_ROLE_KEY) == "BAKED_RESULT"
+    and not obj.hide_get()
+)
+assert csg_result.rbx_primitive_sync.is_roblox_part is False
+assert csg_result.rbx_primitive_sync.mesh_sync_enabled is True
+assert len(csg_result.modifiers) == 0
+operand_collection = next((
+    collection for collection in bpy.data.collections
+    if collection.get(reverse_sync.CSG_COLLECTION_ROLE_KEY) == "OPERANDS"
+    and collection.get(reverse_sync.CSG_SOURCE_KEY) == "40000000-0000-4000-8000-000000000001"
+), None)
+assert operand_collection is None
+assert not any(
+    collection.get(reverse_sync.CSG_COLLECTION_ROLE_KEY) == "RESULTS_ROOT"
+    for collection in bpy.data.collections
+)
+assert csg_result.get(reverse_sync.CSG_ROLE_KEY) == "BAKED_RESULT"
+assert len(csg_result.modifiers) == 0
+assert [
+    obj for obj in bpy.data.objects
+    if obj.get(reverse_sync.CSG_SOURCE_KEY) == "40000000-0000-4000-8000-000000000001"
+] == [csg_result]
+assert csg_result.get(reverse_sync.OBJECT_GUID_KEY) == "40000000-0000-4000-8000-000000000001"
+csg_parent = csg_result.parent
+assert csg_parent is not None
+assert csg_parent.get(reverse_sync.HIERARCHY_GUID_KEY) == "csg-model-node"
+assert any(
+    collection.get(reverse_sync.COLLECTION_GUID_KEY) == "csg-folder"
+    for collection in csg_result.users_collection
+)
+assert bpy.context.scene.collection not in csg_result.users_collection
+print("CSG_SOURCE_HIERARCHY_OK")
+mixed_ordinary = next(
+    obj for obj in bpy.data.objects
+    if obj.get(reverse_sync.OBJECT_GUID_KEY) == "mixed-ordinary"
+)
+assert mixed_ordinary.rbx_primitive_sync.is_roblox_part is True
+assert mixed_ordinary.rbx_primitive_sync.part_type == "Ball"
+assert mixed_ordinary.select_get()
+print("CSG_MIXED_ORDINARY_APPLY_OK")
+
+def rounded_bounds(obj):
+    bpy.context.view_layer.update()
+    minimum, maximum = reverse_sync._evaluated_local_bounds(
+        obj, bpy.context.evaluated_depsgraph_get(),
+    )
+    return tuple(round(value, 5) for point in (minimum, maximum) for value in point)
+
+
+def evaluated_component_count(obj):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh()
+    try:
+        neighbors = [set() for _vertex in mesh.vertices]
+        for edge in mesh.edges:
+            first, second = edge.vertices
+            neighbors[first].add(second)
+            neighbors[second].add(first)
+        unseen = set(range(len(mesh.vertices)))
+        components = 0
+        while unseen:
+            components += 1
+            pending = [unseen.pop()]
+            while pending:
+                current = pending.pop()
+                adjacent = neighbors[current] & unseen
+                unseen.difference_update(adjacent)
+                pending.extend(adjacent)
+        return components
+    finally:
+        evaluated.to_mesh_clear()
+
+
+original_bounds = rounded_bounds(csg_result)
+assert evaluated_component_count(csg_result) == 3
+csg_result.location += Vector((7.5, -3.25, 2.0))
+csg_result.rotation_euler = Euler((0.35, -0.2, 0.6), "XYZ")
+csg_result.scale = (1.75, 0.6, 1.25)
+# A baked result behaves like an ordinary standalone mesh.
+bpy.context.view_layer.update()
+assert rounded_bounds(csg_result) == original_bounds
+assert evaluated_component_count(csg_result) == 3
+bpy.ops.object.select_all(action="DESELECT")
+csg_result.select_set(True)
+bpy.context.view_layer.objects.active = csg_result
+csg_round_trip, _csg_mesh_blobs, _csg_image_blobs = mesh_sync.build_selection_document(bpy.context)
+assert csg_round_trip["instances"][0]["kind"] == "MESH"
+assert csg_round_trip["instances"][0]["id"] == "40000000-0000-4000-8000-000000000001"
+print("CSG_BOOLEAN_RECONSTRUCTION_OK")
+
+# Selecting an imported Empty is a complete-sync boundary. New child meshes
+# inherit its document scope, every enabled descendant is collected, and even
+# an empty child Empty remains in the hierarchy snapshot.
+assert csg_parent.get(reverse_sync.DOCUMENT_MODEL_GUID_KEY) == "csg-model"
+complete_model_id = "40000000-0000-4000-8000-000000000010"
+complete_hierarchy_id = "40000000-0000-4000-8000-000000000011"
+for scoped_object in (csg_parent, csg_result):
+    scoped_object[mesh_sync.DOCUMENT_MODEL_GUID_KEY] = complete_model_id
+    scoped_object[mesh_sync.DOCUMENT_MODEL_NAME_KEY] = "Nested Union"
+    scoped_object[mesh_sync.DOCUMENT_ROOT_KIND_KEY] = "STUDIO_SELECTION"
+csg_parent[mesh_sync.HIERARCHY_GUID_KEY] = complete_hierarchy_id
+replacement_mesh = bpy.data.meshes.new("Low Poly Chain Mesh")
+replacement_mesh.from_pydata(
+    [(-0.5, -0.5, 0), (0.5, -0.5, 0), (0, 0.5, 0), (0, 0, 0.5)],
+    [],
+    [(0, 1, 2), (0, 3, 1), (1, 3, 2), (2, 3, 0)],
+)
+replacement_mesh.update()
+replacement_chain = bpy.data.objects.new("Low Poly Chain", replacement_mesh)
+bpy.context.scene.collection.objects.link(replacement_chain)
+replacement_chain.parent = csg_parent
+replacement_chain.rbx_primitive_sync.is_roblox_part = False
+replacement_chain.rbx_primitive_sync.mesh_sync_enabled = True
+disabled_existing = replacement_chain.copy()
+disabled_existing.data = replacement_chain.data.copy()
+disabled_existing.name = "Disabled Existing Chain"
+disabled_existing[mesh_sync.OBJECT_GUID_KEY] = "40000000-0000-4000-8000-000000000012"
+disabled_existing.rbx_primitive_sync.mesh_sync_enabled = False
+bpy.context.scene.collection.objects.link(disabled_existing)
+disabled_existing.parent = csg_parent
+empty_child = bpy.data.objects.new("Empty Child Group", None)
+bpy.context.scene.collection.objects.link(empty_child)
+empty_child.parent = csg_parent
+bpy.ops.object.select_all(action="DESELECT")
+csg_parent.select_set(True)
+empty_child.select_set(True)
+bpy.context.view_layer.objects.active = csg_parent
+assert mesh_sync.RBX_OT_MeshSyncSendSelected.poll(bpy.context)
+complete_document, _complete_meshes, _complete_images = mesh_sync.build_selection_document(bpy.context)
+complete_ids = {record["id"] for record in complete_document["instances"]}
+assert replacement_chain.get(mesh_sync.OBJECT_GUID_KEY) in complete_ids
+assert csg_result.get(mesh_sync.OBJECT_GUID_KEY) in complete_ids
+assert disabled_existing.get(mesh_sync.OBJECT_GUID_KEY) not in complete_ids
+assert complete_document["model"]["id"] == complete_model_id
+assert complete_document["replaceScopes"] == [{
+    "hierarchyId": complete_hierarchy_id,
+    "mode": "REPLACE_DESCENDANTS",
+    "presentSourceObjectIds": sorted((
+        csg_result.get(mesh_sync.OBJECT_GUID_KEY),
+        disabled_existing.get(mesh_sync.OBJECT_GUID_KEY),
+        replacement_chain.get(mesh_sync.OBJECT_GUID_KEY),
+    )),
+}]
+assert any(
+    node["id"] == empty_child.get(mesh_sync.HIERARCHY_GUID_KEY)
+    for node in complete_document["hierarchy"]
+)
+print("EMPTY_COMPLETE_SYNC_SCOPE_OK")
+
+# Old files did not store document metadata on imported Empties. An
+# unambiguous synchronized descendant migrates the Empty, allowing a new child
+# mesh to inherit the same scope without being treated as unrelated.
+legacy_empty = bpy.data.objects.new("Legacy Imported Empty", None)
+bpy.context.scene.collection.objects.link(legacy_empty)
+legacy_known = replacement_chain.copy()
+legacy_known.data = replacement_chain.data.copy()
+bpy.context.scene.collection.objects.link(legacy_known)
+legacy_known.parent = legacy_empty
+legacy_known[mesh_sync.DOCUMENT_MODEL_GUID_KEY] = "40000000-0000-4000-8000-000000000099"
+legacy_known[mesh_sync.DOCUMENT_MODEL_NAME_KEY] = "Legacy Lamp"
+legacy_known[mesh_sync.DOCUMENT_ROOT_KIND_KEY] = "STUDIO_SELECTION"
+legacy_new = replacement_chain.copy()
+legacy_new.data = replacement_chain.data.copy()
+bpy.context.scene.collection.objects.link(legacy_new)
+legacy_new.parent = legacy_empty
+for key in (
+    mesh_sync.DOCUMENT_MODEL_GUID_KEY,
+    mesh_sync.DOCUMENT_MODEL_NAME_KEY,
+    mesh_sync.DOCUMENT_ROOT_KIND_KEY,
+    mesh_sync.OBJECT_GUID_KEY,
+):
+    if key in legacy_new:
+        del legacy_new[key]
+bpy.ops.object.select_all(action="DESELECT")
+legacy_empty.select_set(True)
+bpy.context.view_layer.objects.active = legacy_empty
+legacy_document, _legacy_meshes, _legacy_images = mesh_sync.build_selection_document(bpy.context)
+assert legacy_document["model"]["id"] == "40000000-0000-4000-8000-000000000099"
+assert legacy_empty.get(mesh_sync.DOCUMENT_MODEL_GUID_KEY) == "40000000-0000-4000-8000-000000000099"
+assert len(legacy_document["instances"]) == 2
+print("LEGACY_EMPTY_SCOPE_MIGRATION_OK")
+
+# Appearance selection supports direct-parent and current-selection scopes,
+# optionally includes Parts, and merging keeps the active MeshPart identity
+# while recording every removed source GUID for Studio cleanup.
+def make_merge_mesh(name, location):
+    mesh = bpy.data.meshes.new(f"{name} Mesh")
+    mesh.from_pydata(
+        [(-0.5, -0.5, 0), (0.5, -0.5, 0), (0, 0.5, 0), (0, 0, 0.5)],
+        [],
+        [(0, 1, 2), (0, 3, 1), (1, 3, 2), (2, 3, 0)],
+    )
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = location
+    return obj
+
+
+merge_parent = bpy.data.objects.new("Merge Parent", None)
+bpy.context.scene.collection.objects.link(merge_parent)
+other_parent = bpy.data.objects.new("Other Parent", None)
+bpy.context.scene.collection.objects.link(other_parent)
+merge_active = make_merge_mesh("Merge Active", (0, 0, 0))
+merge_match = make_merge_mesh("Merge Match", (2, 0, 0))
+merge_different = make_merge_mesh("Merge Different", (4, 0, 0))
+merge_part = make_merge_mesh("Matching Roblox Part", (6, 0, 0))
+merge_outside = make_merge_mesh("Matching Outside", (8, 0, 0))
+for obj in (merge_active, merge_match, merge_different, merge_part, merge_outside):
+    obj.rbx_primitive_sync.mesh_use_roblox_material = True
+    obj.rbx_primitive_sync.material = "Plastic"
+    obj.rbx_primitive_sync.color = (0.2, 0.4, 0.6)
+    obj.rbx_primitive_sync.transparency = 0.1
+for obj in (merge_active, merge_match, merge_different, merge_part):
+    obj.parent = merge_parent
+merge_outside.parent = other_parent
+merge_different.rbx_primitive_sync.material = "Metal"
+merge_part.rbx_primitive_sync.is_roblox_part = True
+merge_part.rbx_primitive_sync.sync_enabled = True
+merge_active[mesh_sync.OBJECT_GUID_KEY] = "50000000-0000-4000-8000-000000000001"
+merge_match[mesh_sync.OBJECT_GUID_KEY] = "50000000-0000-4000-8000-000000000002"
+merge_different[mesh_sync.OBJECT_GUID_KEY] = "50000000-0000-4000-8000-000000000003"
+
+bpy.ops.object.select_all(action="DESELECT")
+merge_active.select_set(True)
+bpy.context.view_layer.objects.active = merge_active
+bpy.context.scene.rbx_primitive_sync.mesh_appearance_selection_scope = "SAME_PARENT"
+bpy.context.scene.rbx_primitive_sync.mesh_appearance_exclude_parts = True
+assert bpy.ops.rbx_mesh_sync.select_same_appearance() == {"FINISHED"}
+assert set(bpy.context.selected_objects) == {merge_active, merge_match}
+
+bpy.context.scene.rbx_primitive_sync.mesh_appearance_exclude_parts = False
+assert bpy.ops.rbx_mesh_sync.select_same_appearance() == {"FINISHED"}
+assert set(bpy.context.selected_objects) == {merge_active, merge_match, merge_part}
+
+# Current Selection can include an object outside the parent while filtering a
+# different appearance out of the initial selection.
+bpy.ops.object.select_all(action="DESELECT")
+for obj in (merge_active, merge_different, merge_outside):
+    obj.select_set(True)
+bpy.context.view_layer.objects.active = merge_active
+bpy.context.scene.rbx_primitive_sync.mesh_appearance_selection_scope = "CURRENT_SELECTION"
+bpy.context.scene.rbx_primitive_sync.mesh_appearance_exclude_parts = True
+assert bpy.ops.rbx_mesh_sync.select_same_appearance() == {"FINISHED"}
+assert set(bpy.context.selected_objects) == {merge_active, merge_outside}
+print("SELECT_SAME_APPEARANCE_OK")
+
+# A manually added Part blocks the destructive operation before Join.
+merge_match.select_set(True)
+merge_part.select_set(True)
+before_merge_objects = set(bpy.data.objects)
+try:
+    bpy.ops.rbx_mesh_sync.merge_to_active_appearance()
+    raise AssertionError("Part selection should block MeshPart merge")
+except RuntimeError as error:
+    assert "Roblox Part" in str(error)
+assert set(bpy.data.objects) == before_merge_objects
+merge_part.select_set(False)
+
+# A manually added different MeshPart is accepted and receives the active
+# appearance. The active GUID survives and both removed GUIDs are exported.
+merge_different.select_set(True)
+merge_outside.select_set(False)
+active_parent = merge_active.parent
+active_location = merge_active.location.copy()
+merge_match_name = merge_match.name
+merge_different_name = merge_different.name
+assert bpy.ops.rbx_mesh_sync.merge_to_active_appearance() == {"FINISHED"}
+assert merge_active.name in bpy.data.objects
+assert merge_match_name not in bpy.data.objects
+assert merge_different_name not in bpy.data.objects
+assert merge_active.parent == active_parent
+assert merge_active.location == active_location
+assert merge_active.get(mesh_sync.OBJECT_GUID_KEY) == "50000000-0000-4000-8000-000000000001"
+assert merge_active.rbx_primitive_sync.material == "Plastic"
+stored_replacements = json.loads(merge_active.get(mesh_sync.REPLACES_OBJECT_IDS_KEY))
+assert stored_replacements == [
+    "50000000-0000-4000-8000-000000000002",
+    "50000000-0000-4000-8000-000000000003",
+]
+bpy.ops.object.select_all(action="DESELECT")
+merge_active.select_set(True)
+bpy.context.view_layer.objects.active = merge_active
+merged_document, _merged_meshes, _merged_images = mesh_sync.build_selection_document(bpy.context)
+assert merged_document["instances"][0]["replacesObjectIds"] == stored_replacements
+print("MERGE_TO_ACTIVE_APPEARANCE_OK")

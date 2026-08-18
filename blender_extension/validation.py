@@ -5,6 +5,7 @@ import uuid
 
 from .core import MAX_PART_SIZE, MIN_PART_SIZE, SUPPORTED_PART_TYPES, convert_size
 from .geometry import local_mesh_size, mesh_signature
+from .i18n import tr, trf
 from .tube import estimated_tube_part_count, tube_wedge_components
 
 
@@ -42,28 +43,30 @@ def validate_scene(scene):
             continue
 
         if obj.type != "MESH":
-            issues.append(ValidationIssue("ERROR", "対応オブジェクトはMeshである必要があります", obj.name))
+            issues.append(ValidationIssue("ERROR", tr("Supported objects must be Meshes"), obj.name))
             continue
         if part.part_type not in SUPPORTED_PART_TYPES:
-            issues.append(ValidationIssue("ERROR", f"未対応のPart種別です: {part.part_type}", obj.name))
+            issues.append(ValidationIssue("ERROR", trf(
+                "Unsupported Part type: {part_type}", part_type=part.part_type,
+            ), obj.name))
         if not _valid_guid(part.guid):
-            issues.append(ValidationIssue("ERROR", "GUIDが未設定または不正です", obj.name))
+            issues.append(ValidationIssue("ERROR", tr("The GUID is missing or invalid"), obj.name))
         elif part.guid in seen_guids:
             issues.append(ValidationIssue(
-                "ERROR", f"GUIDが{seen_guids[part.guid]}と重複しています", obj.name,
+                "ERROR", trf("The GUID duplicates {name}", name=seen_guids[part.guid]), obj.name,
             ))
         else:
             seen_guids[part.guid] = obj.name
 
         if any(component <= 0 for component in obj.scale):
-            issues.append(ValidationIssue("ERROR", "負またはゼロのスケールは使用できません", obj.name))
+            issues.append(ValidationIssue("ERROR", tr("Negative or zero scale is not supported"), obj.name))
         if any(modifier.show_viewport for modifier in obj.modifiers):
-            issues.append(ValidationIssue("ERROR", "有効なModifierは使用できません", obj.name))
+            issues.append(ValidationIssue("ERROR", tr("Active modifiers are not supported"), obj.name))
 
         expected_signature = obj.get("rbx_mesh_signature", "")
         if not expected_signature or expected_signature != mesh_signature(obj.data):
             issues.append(ValidationIssue(
-                "ERROR", "プリミティブの頂点が変更されています。Object Modeで変形してください", obj.name,
+                "ERROR", tr("Primitive vertices were edited. Transform the object in Object Mode."), obj.name,
             ))
 
         _, _, world_scale = obj.matrix_world.decompose()
@@ -73,17 +76,20 @@ def validate_scene(scene):
         if any(size < MIN_PART_SIZE or size > MAX_PART_SIZE for size in roblox_size):
             issues.append(ValidationIssue(
                 "ERROR",
-                f"Roblox Size範囲外です: {tuple(round(value, 4) for value in roblox_size)}",
+                trf(
+                    "Roblox Size is out of range: {size}",
+                    size=tuple(round(value, 4) for value in roblox_size),
+                ),
                 obj.name,
             ))
         if part.part_type == "Tube":
             if not 0.0 < part.tube_inner_ratio < 1.0:
                 issues.append(ValidationIssue(
-                    "ERROR", "TubeのInner Radiusは0より大きく1未満にしてください", obj.name,
+                    "ERROR", tr("Tube Inner Radius must be greater than 0 and less than 1"), obj.name,
                 ))
             if part.tube_segments < 3 or part.tube_segments > 64:
                 issues.append(ValidationIssue(
-                    "ERROR", "TubeのSegmentsは3～64にしてください", obj.name,
+                    "ERROR", tr("Tube Segments must be between 3 and 64"), obj.name,
                 ))
             try:
                 components = tube_wedge_components(
@@ -99,23 +105,28 @@ def validate_scene(scene):
             if invalid_component:
                 issues.append(ValidationIssue(
                     "ERROR",
-                    "Tube分解後のWedgePartがRoblox Size範囲外です。サイズ・内径・分割数を調整してください",
+                    tr("A WedgePart produced by Tube decomposition is outside the Roblox Size range. Adjust the size, inner radius, or segments."),
                     obj.name,
                 ))
             if estimated_tube_part_count(part.tube_segments) > 128:
                 issues.append(ValidationIssue(
                     "WARNING",
-                    f"{obj.name}: Tubeだけで{estimated_tube_part_count(part.tube_segments)} Partsを使用します",
+                    trf(
+                        "{name}: Tube alone uses {count} Parts",
+                        name=obj.name, count=estimated_tube_part_count(part.tube_segments),
+                    ),
                     obj.name,
                 ))
 
     part_count = estimated_scene_part_count(scene)
     if part_count > 10000:
         issues.append(ValidationIssue(
-            "ERROR", f"展開後のPart数が10,000を超えます: {part_count}"
+            "ERROR", trf("Expanded Part count exceeds 10,000: {count}", count=part_count)
         ))
     if part_count > 500:
         issues.append(ValidationIssue(
-            "WARNING", f"同期対象が{part_count}個あります。Studioで性能を計測してください"
+            "WARNING", trf(
+                "There are {count} synchronized Parts. Measure performance in Studio.", count=part_count,
+            )
         ))
     return issues

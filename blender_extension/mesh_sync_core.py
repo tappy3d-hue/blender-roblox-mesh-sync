@@ -12,10 +12,11 @@ MESH_SCHEMA_ID = "roblox-mesh-sync/4"
 PREVIOUS_MESH_SCHEMA_ID = "roblox-mesh-sync/3"
 LEGACY_MESH_SCHEMA_ID = "roblox-mesh-sync/2"
 ORIGINAL_MESH_SCHEMA_ID = "roblox-mesh-sync/1"
-REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
+REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/4"
+PREVIOUS_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
 LEGACY_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/2"
 ORIGINAL_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/1"
-MESH_SYNC_VERSION = "0.10.7"
+MESH_SYNC_VERSION = "0.11.0"
 DEFAULT_PORT = 27182
 CHUNK_SIZE = 256 * 1024
 MAX_BLOB_SIZE = 32 * 1024 * 1024
@@ -144,12 +145,50 @@ def validate_document_limits(document: dict):
                 "MODEL", "FOLDER", "IGNORE",
             }:
                 raise ValueError("Mesh Sync Empty has an invalid Studio mode")
+        hierarchy_by_id = {node.get("id"): node for node in hierarchy}
+        replace_scopes = document.get("replaceScopes", [])
+        if not isinstance(replace_scopes, list):
+            raise ValueError("Mesh Sync replace scopes must be a list")
+        seen_scope_ids = set()
+        for scope in replace_scopes:
+            if not isinstance(scope, dict) or scope.get("mode") != "REPLACE_DESCENDANTS":
+                raise ValueError("Mesh Sync has an invalid replace scope")
+            scope_id = scope.get("hierarchyId")
+            if scope_id in seen_scope_ids:
+                raise ValueError("Mesh Sync has duplicate replace scopes")
+            node = hierarchy_by_id.get(scope_id)
+            if node is None or node.get("kind") != "MODEL":
+                raise ValueError("Mesh Sync replace scope must reference a Model hierarchy node")
+            present_ids = scope.get("presentSourceObjectIds", [])
+            if (
+                not isinstance(present_ids, list)
+                or any(not isinstance(value, str) or not value for value in present_ids)
+                or len(present_ids) != len(set(present_ids))
+            ):
+                raise ValueError("Mesh Sync replace scope has invalid present object IDs")
+            seen_scope_ids.add(scope_id)
     hierarchy_parent_order(hierarchy)
     mesh_hashes = {item.get("hash") for item in meshes}
     instance_ids = [item.get("id") for item in instances]
     if len(instance_ids) != len(set(instance_ids)):
         raise ValueError("Mesh Sync produced duplicate instance IDs")
+    incoming_ids = set(instance_ids)
+    replacement_owners = {}
     for instance in instances:
+        replacement_ids = instance.get("replacesObjectIds", [])
+        if not isinstance(replacement_ids, list):
+            raise ValueError("Mesh Sync replacement IDs must be a list")
+        if (
+            any(not isinstance(value, str) or not value for value in replacement_ids)
+            or len(replacement_ids) != len(set(replacement_ids))
+        ):
+            raise ValueError("Mesh Sync has invalid or duplicate replacement IDs")
+        for replacement_id in replacement_ids:
+            if replacement_id == instance.get("id") or replacement_id in incoming_ids:
+                raise ValueError("Mesh Sync cannot replace an object included in the same send")
+            if replacement_id in replacement_owners:
+                raise ValueError("Mesh Sync replacement ID is claimed by multiple objects")
+            replacement_owners[replacement_id] = instance.get("id")
         kind = instance.get("kind", "MESH")
         if kind == "MESH" and instance.get("meshHash") not in mesh_hashes:
             raise ValueError(f"{instance.get('name', 'MeshPart')} references a missing mesh")
@@ -161,14 +200,15 @@ def validate_document_limits(document: dict):
 
 def validate_reverse_document(document: dict):
     if document.get("schema") not in {
-        REVERSE_SCHEMA_ID, LEGACY_REVERSE_SCHEMA_ID, ORIGINAL_REVERSE_SCHEMA_ID,
+        REVERSE_SCHEMA_ID, PREVIOUS_REVERSE_SCHEMA_ID,
+        LEGACY_REVERSE_SCHEMA_ID, ORIGINAL_REVERSE_SCHEMA_ID,
     }:
         raise ValueError("Unsupported Studio to Blender schema")
     objects = document.get("objects", [])
     meshes = document.get("meshes", [])
     images = document.get("images", [])
     hierarchy = document.get("hierarchy", [])
-    if document.get("schema") == REVERSE_SCHEMA_ID:
+    if document.get("schema") in {REVERSE_SCHEMA_ID, PREVIOUS_REVERSE_SCHEMA_ID}:
         if document.get("model", {}).get("rootKind") not in {"BLENDER_SCENE", "STUDIO_SELECTION"}:
             raise ValueError("Studio document has an invalid root kind")
     if not objects:
@@ -188,13 +228,16 @@ def validate_reverse_document(document: dict):
     for item in objects:
         if item.get("kind") == "MESH" and item.get("meshHash") not in mesh_hashes:
             property_only = (
-                document.get("schema") == REVERSE_SCHEMA_ID
-                and item.get("geometryOwner") == "BLENDER"
+                document.get("schema") in {REVERSE_SCHEMA_ID, PREVIOUS_REVERSE_SCHEMA_ID}
                 and item.get("geometryAvailable") is False
+                and (
+                    document.get("schema") == REVERSE_SCHEMA_ID
+                    or item.get("geometryOwner") == "BLENDER"
+                )
             )
             if not property_only:
                 raise ValueError(f"{item.get('name', 'MeshPart')} references a missing mesh")
-        if document.get("schema") == REVERSE_SCHEMA_ID:
+        if document.get("schema") in {REVERSE_SCHEMA_ID, PREVIOUS_REVERSE_SCHEMA_ID}:
             if item.get("geometryOwner", "STUDIO") not in {"BLENDER", "STUDIO"}:
                 raise ValueError(f"{item.get('name', 'object')} has an invalid geometry owner")
         appearance_hash = item.get("appearanceHash")
@@ -225,6 +268,119 @@ def validate_reverse_document(document: dict):
             if digest is not None and digest not in image_hashes:
                 raise ValueError("An appearance references a missing image")
     hierarchy_parent_order(hierarchy)
+    if document.get("schema") == REVERSE_SCHEMA_ID:
+        validate_csg_document(document, set(object_ids))
+
+
+def validate_csg_document(document: dict, object_ids: set[str]):
+    nodes = document.get("csg", [])
+    roots = document.get("csgRoots", [])
+    if not isinstance(nodes, list) or not nodes:
+        raise ValueError("Studio CSG document has no CSG nodes")
+    if not isinstance(roots, list) or not roots:
+        raise ValueError("Studio CSG document has no CSG roots")
+    if len(nodes) > 10000:
+        raise ValueError("Studio CSG document exceeds the supported node limit")
+    node_ids = [node.get("id") for node in nodes]
+    if any(not isinstance(value, str) or not value for value in node_ids):
+        raise ValueError("Every CSG node must have an ID")
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("Studio sent duplicate CSG node IDs")
+    node_ids = set(node_ids)
+    edges = {node_id: [] for node_id in node_ids}
+    for node in nodes:
+        node_id = node["id"]
+        if node.get("op") not in {"union", "intersect"}:
+            raise ValueError(f"{node.get('name', 'CSG')} has an invalid CSG operation")
+        size, cframe = node.get("size", []), node.get("cframe", [])
+        if len(size) != 3 or len(cframe) != 12:
+            raise ValueError(f"{node.get('name', 'CSG')} has an invalid transform")
+        validate_finite((*size, *cframe), f"{node.get('name', 'CSG')} transform")
+        operands = node.get("operands", [])
+        if not isinstance(operands, list) or not operands:
+            raise ValueError(f"{node.get('name', 'CSG')} has no operands")
+        positive_count = 0
+        for operand in operands:
+            role, kind, reference = operand.get("role"), operand.get("kind"), operand.get("ref")
+            if role not in {"positive", "negative"}:
+                raise ValueError(f"{node.get('name', 'CSG')} has an invalid operand role")
+            if role == "positive":
+                positive_count += 1
+            if kind == "instance":
+                if reference not in object_ids:
+                    raise ValueError(f"{node.get('name', 'CSG')} references a missing object")
+            elif kind == "csg":
+                if reference not in node_ids:
+                    raise ValueError(f"{node.get('name', 'CSG')} references a missing CSG node")
+                edges[node_id].append(reference)
+            else:
+                raise ValueError(f"{node.get('name', 'CSG')} has an invalid operand kind")
+        if positive_count == 0:
+            raise ValueError(f"{node.get('name', 'CSG')} has no positive operand")
+    for root in roots:
+        if not isinstance(root, dict) or root.get("ref") not in node_ids:
+            raise ValueError("Studio CSG document has an invalid root reference")
+    visiting, visited = set(), set()
+
+    def visit(node_id):
+        if node_id in visiting:
+            raise ValueError("Studio CSG document contains a reference cycle")
+        if node_id in visited:
+            return
+        visiting.add(node_id)
+        for child_id in edges[node_id]:
+            visit(child_id)
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for root in roots:
+        visit(root["ref"])
+    if visited != node_ids:
+        raise ValueError("Studio CSG document contains an unreachable CSG node")
+
+
+def csg_document_summary(document: dict):
+    nodes = document.get("csg", [])
+    objects = document.get("objects", [])
+    roots = document.get("csgRoots", [])
+    positive = sum(
+        operand.get("role") == "positive"
+        for node in nodes
+        for operand in node.get("operands", [])
+    )
+    negative = sum(
+        operand.get("role") == "negative"
+        for node in nodes
+        for operand in node.get("operands", [])
+    )
+    return {
+        "roots": len(roots),
+        "nodes": len(nodes),
+        "objects": len(objects),
+        "positiveOperands": positive,
+        "negativeOperands": negative,
+    }
+
+
+def csg_evaluation_order(document: dict):
+    """Return reachable CSG node IDs in child-before-parent order."""
+
+    by_id = {node["id"]: node for node in document.get("csg", [])}
+    ordered, visited = [], set()
+
+    def visit(node_id):
+        if node_id in visited:
+            return
+        node = by_id[node_id]
+        for operand in node.get("operands", []):
+            if operand.get("kind") == "csg":
+                visit(operand["ref"])
+        visited.add(node_id)
+        ordered.append(node_id)
+
+    for root in document.get("csgRoots", []):
+        visit(root["ref"])
+    return ordered
 
 
 def hierarchy_parent_order(hierarchy: Sequence[dict]):

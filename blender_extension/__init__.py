@@ -3,7 +3,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Roblox Primitive Sync",
     "author": "Roblox Primitive Sync contributors",
-    "version": (0, 10, 7),
+    "version": (0, 11, 0),
     "blender": (4, 2, 0),
     "location": "3D View > Shift+A > Roblox Parts; Sidebar > Roblox",
     "description": "Author models that rebuild as standard Roblox Parts",
@@ -14,7 +14,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.props import PointerProperty
 
-from . import material_preview, mesh_sync, operators, properties, reverse_sync, ui
+from . import i18n, material_preview, mesh_sync, operators, properties, reverse_sync, ui
 
 
 CLASSES = (
@@ -67,7 +67,10 @@ def _cleanup_stale_registration():
     if bpy.app.timers.is_registered(reverse_sync.auto_apply_pending_timer):
         bpy.app.timers.unregister(reverse_sync.auto_apply_pending_timer)
     _remove_named_handlers(bpy.app.handlers.load_post, {"_refresh_saved_material_previews"})
-    _remove_named_handlers(bpy.app.handlers.depsgraph_update_post, {"_deduplicate_object_ids"})
+    _remove_named_handlers(
+        bpy.app.handlers.depsgraph_update_post,
+        {"_deduplicate_object_ids", "sync_csg_operand_transforms"},
+    )
     _remove_add_menu_callbacks()
     for owner in (bpy.types.Scene, bpy.types.Object):
         if hasattr(owner, "rbx_primitive_sync"):
@@ -85,6 +88,7 @@ def _cleanup_stale_registration():
                 bpy.utils.unregister_class(candidate)
             except (RuntimeError, ValueError):
                 pass
+    i18n.unregister()
 
 
 @persistent
@@ -115,6 +119,7 @@ def register():
     _cleanup_stale_registration()
     registered = []
     try:
+        i18n.register()
         for cls in CLASSES:
             bpy.utils.register_class(cls)
             registered.append(cls)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import copy
 from pathlib import Path
 import unittest
 
@@ -16,7 +17,8 @@ SPEC.loader.exec_module(core)
 class MeshSyncCoreTests(unittest.TestCase):
     def test_schema_versions_include_new_and_legacy_reverse(self):
         self.assertEqual(core.MESH_SCHEMA_ID, "roblox-mesh-sync/4")
-        self.assertEqual(core.REVERSE_SCHEMA_ID, "roblox-mesh-sync-reverse/3")
+        self.assertEqual(core.REVERSE_SCHEMA_ID, "roblox-mesh-sync-reverse/4")
+        self.assertEqual(core.PREVIOUS_REVERSE_SCHEMA_ID, "roblox-mesh-sync-reverse/3")
         legacy = {
             "schema": core.LEGACY_REVERSE_SCHEMA_ID,
             "objects": [{
@@ -32,7 +34,7 @@ class MeshSyncCoreTests(unittest.TestCase):
 
     def test_reverse_v3_accepts_blender_owned_property_only_mesh(self):
         document = {
-            "schema": core.REVERSE_SCHEMA_ID,
+            "schema": core.PREVIOUS_REVERSE_SCHEMA_ID,
             "model": {"id": "root", "name": "Root", "rootKind": "BLENDER_SCENE"},
             "objects": [{
                 "id": "mesh", "kind": "MESH", "name": "Mesh",
@@ -43,6 +45,48 @@ class MeshSyncCoreTests(unittest.TestCase):
             "meshes": [], "images": [], "appearances": [], "hierarchy": [],
         }
         core.validate_reverse_document(document)
+
+    def test_reverse_v4_validates_nested_csg_references(self):
+        transform = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+        document = {
+            "schema": core.REVERSE_SCHEMA_ID,
+            "model": {"id": "root", "name": "Union", "rootKind": "STUDIO_SELECTION"},
+            "objects": [
+                {"id": "positive", "kind": "PART", "partType": "Block", "size": [1, 1, 1], "cframe": transform},
+                {"id": "negative", "kind": "PART", "partType": "Ball", "size": [1, 1, 1], "cframe": transform},
+            ],
+            "meshes": [], "images": [], "appearances": [], "hierarchy": [],
+            "csg": [
+                {
+                    "id": "inner", "name": "Inner", "op": "union", "size": [1, 1, 1], "cframe": transform,
+                    "operands": [{"role": "positive", "kind": "instance", "ref": "positive"}],
+                },
+                {
+                    "id": "outer", "name": "Outer", "op": "union", "size": [1, 1, 1], "cframe": transform,
+                    "operands": [
+                        {"role": "positive", "kind": "csg", "ref": "inner"},
+                        {"role": "negative", "kind": "instance", "ref": "negative"},
+                    ],
+                },
+            ],
+            "csgRoots": [{"kind": "csg", "ref": "outer", "name": "Outer"}],
+        }
+        core.validate_reverse_document(document)
+        self.assertEqual(core.csg_evaluation_order(document), ["inner", "outer"])
+        self.assertEqual(core.csg_document_summary(document), {
+            "roots": 1, "nodes": 2, "objects": 2,
+            "positiveOperands": 2, "negativeOperands": 1,
+        })
+
+        missing = copy.deepcopy(document)
+        missing["csg"][1]["operands"][1]["ref"] = "missing"
+        with self.assertRaisesRegex(ValueError, "missing object"):
+            core.validate_reverse_document(missing)
+
+        cyclic = copy.deepcopy(document)
+        cyclic["csg"][0]["operands"] = [{"role": "positive", "kind": "csg", "ref": "outer"}]
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            core.validate_reverse_document(cyclic)
 
     def test_content_hash_is_key_order_independent(self):
         self.assertEqual(
@@ -116,7 +160,7 @@ class MeshSyncCoreTests(unittest.TestCase):
 
     def test_reverse_document_rejects_duplicate_ids(self):
         document = {
-            "schema": core.REVERSE_SCHEMA_ID,
+            "schema": core.PREVIOUS_REVERSE_SCHEMA_ID,
             "model": {"id": "root", "name": "Root", "rootKind": "STUDIO_SELECTION"},
             "objects": [{"id": "same"}, {"id": "same"}],
         }
@@ -125,7 +169,7 @@ class MeshSyncCoreTests(unittest.TestCase):
 
     def test_reverse_document_normalizes_empty_luau_map_array(self):
         document = {
-            "schema": core.REVERSE_SCHEMA_ID,
+            "schema": core.PREVIOUS_REVERSE_SCHEMA_ID,
             "model": {"id": "root", "name": "Root", "rootKind": "STUDIO_SELECTION"},
             "objects": [{
                 "id": "part", "kind": "PART", "appearanceHash": "appearance",
@@ -139,7 +183,7 @@ class MeshSyncCoreTests(unittest.TestCase):
 
     def test_reverse_document_rejects_nonempty_array_as_image_map_table(self):
         document = {
-            "schema": core.REVERSE_SCHEMA_ID,
+            "schema": core.PREVIOUS_REVERSE_SCHEMA_ID,
             "model": {"id": "root", "name": "Root", "rootKind": "STUDIO_SELECTION"},
             "objects": [{
                 "id": "part", "kind": "PART", "appearanceHash": "appearance",
@@ -153,7 +197,7 @@ class MeshSyncCoreTests(unittest.TestCase):
 
     def test_reverse_document_validates_native_mesh_size(self):
         document = {
-            "schema": core.REVERSE_SCHEMA_ID,
+            "schema": core.PREVIOUS_REVERSE_SCHEMA_ID,
             "model": {"id": "root", "name": "Root", "rootKind": "STUDIO_SELECTION"},
             "objects": [{
                 "id": "mesh", "kind": "MESH", "meshHash": "mesh-hash",
@@ -190,6 +234,34 @@ class MeshSyncCoreTests(unittest.TestCase):
                 {"id": "a", "kind": "FOLDER", "parentId": "missing"},
             ])
 
+    def test_replace_scope_references_model_hierarchy(self):
+        document = {
+            "schema": core.MESH_SCHEMA_ID,
+            "model": {"id": "root", "name": "Root", "rootKind": "BLENDER_SCENE"},
+            "instances": [{"id": "part", "kind": "PART", "partType": "Block"}],
+            "meshes": [], "images": [],
+            "hierarchy": [{"id": "lamp", "name": "Lamp", "kind": "MODEL"}],
+            "replaceScopes": [{
+                "hierarchyId": "lamp", "mode": "REPLACE_DESCENDANTS",
+                "presentSourceObjectIds": ["part"],
+            }],
+        }
+        core.validate_document_limits(document)
+
+    def test_replace_scope_rejects_folder_reference(self):
+        document = {
+            "schema": core.MESH_SCHEMA_ID,
+            "model": {"id": "root", "name": "Root", "rootKind": "BLENDER_SCENE"},
+            "instances": [{"id": "part", "kind": "PART", "partType": "Block"}],
+            "meshes": [], "images": [],
+            "hierarchy": [{"id": "folder", "name": "Folder", "kind": "FOLDER"}],
+            "replaceScopes": [{
+                "hierarchyId": "folder", "mode": "REPLACE_DESCENDANTS",
+            }],
+        }
+        with self.assertRaisesRegex(ValueError, "Model hierarchy node"):
+            core.validate_document_limits(document)
+
     def test_forward_document_accepts_part_only_send(self):
         core.validate_document_limits({
             "meshes": [],
@@ -204,6 +276,33 @@ class MeshSyncCoreTests(unittest.TestCase):
                 "images": [],
                 "instances": [{"id": "mesh", "kind": "MESH", "meshHash": "missing"}],
             })
+
+    def test_forward_replacement_ids_are_validated(self):
+        document = {
+            "schema": core.MESH_SCHEMA_ID,
+            "model": {"id": "root", "name": "Root", "rootKind": "BLENDER_SCENE"},
+            "meshes": [], "images": [], "hierarchy": [],
+            "instances": [
+                {
+                    "id": "merged", "kind": "PART", "partType": "Block",
+                    "replacesObjectIds": ["old-a", "old-b"],
+                },
+            ],
+        }
+        core.validate_document_limits(document)
+
+        self_replacement = copy.deepcopy(document)
+        self_replacement["instances"][0]["replacesObjectIds"] = ["merged"]
+        with self.assertRaisesRegex(ValueError, "included in the same send"):
+            core.validate_document_limits(self_replacement)
+
+        duplicate_claim = copy.deepcopy(document)
+        duplicate_claim["instances"].append({
+            "id": "second", "kind": "PART", "partType": "Block",
+            "replacesObjectIds": ["old-a"],
+        })
+        with self.assertRaisesRegex(ValueError, "claimed by multiple"):
+            core.validate_document_limits(duplicate_claim)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from mathutils import Matrix
 from .core import SUPPORTED_PART_TYPES
 from .detection import detect_primitive, detect_tube_vertices
 from .geometry import create_mesh, mesh_orientation_bases, mesh_signature, mesh_surface_samples
+from .i18n import tr, trf
 from .properties import PART_TYPE_ITEMS
 from .serialization import serialize_scene
 from .validation import estimated_scene_part_count, validate_scene
@@ -195,7 +196,7 @@ class RBX_OT_ConvertSelected(Operator):
             if obj.type == "MESH"
         ]
         if not selected:
-            self.report({"ERROR"}, "Meshオブジェクトを選択してください")
+            self.report({"ERROR"}, tr("Select a Mesh object"))
             return {"CANCELLED"}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -241,9 +242,11 @@ class RBX_OT_ConvertSelected(Operator):
             self.report({"WARNING"}, message)
         if not converted:
             if already_valid and not failures:
-                self.report({"INFO"}, f"選択した{already_valid}個はすでに有効なプリミティブです")
+                self.report({"INFO"}, trf(
+                    "The selected {count} objects are already valid primitives", count=already_valid,
+                ))
                 return {"FINISHED"}
-            self.report({"ERROR"}, "変換できるメッシュがありませんでした")
+            self.report({"ERROR"}, tr("No meshes could be converted"))
             return {"CANCELLED"}
 
         summary = ", ".join(
@@ -251,7 +254,10 @@ class RBX_OT_ConvertSelected(Operator):
         )
         self.report(
             {"INFO"},
-            f"{len(converted)}個を変換しました ({summary}) / {len(failures)} skipped",
+            trf(
+                "Converted {count} objects ({summary}) / {skipped} skipped",
+                count=len(converted), summary=summary, skipped=len(failures),
+            ),
         )
         return {"FINISHED"}
 
@@ -322,13 +328,19 @@ class RBX_OT_ValidateScene(Operator):
                     obj.select_set(True)
             for issue in errors[:8]:
                 self.report({"ERROR"}, f"{issue.object_name}: {issue.message}")
-            self.report({"ERROR"}, f"検証失敗: {len(errors)} errors / {len(warnings)} warnings")
+            self.report({"ERROR"}, trf(
+                "Validation failed: {errors} errors / {warnings} warnings",
+                errors=len(errors), warnings=len(warnings),
+            ))
             return {"CANCELLED"}
 
         for issue in warnings[:8]:
             self.report({"WARNING"}, issue.message)
         count = estimated_scene_part_count(context.scene)
-        self.report({"INFO"}, f"検証完了: {count} parts / {len(warnings)} warnings")
+        self.report({"INFO"}, trf(
+            "Validation complete: {parts} parts / {warnings} warnings",
+            parts=count, warnings=len(warnings),
+        ))
         return {"FINISHED"}
 
 
@@ -340,7 +352,7 @@ class RBX_OT_RepairGuids(Operator):
 
     def execute(self, context):
         changed = ensure_unique_guids(context.scene)
-        self.report({"INFO"}, f"{changed}個のObject IDを修復しました")
+        self.report({"INFO"}, trf("Repaired {count} Object IDs", count=changed))
         return {"FINISHED"}
 
 
@@ -369,7 +381,7 @@ class RBX_OT_ExportJson(Operator, ExportHelper):
 
         payload = serialize_scene(context.scene)
         if not payload["parts"]:
-            self.report({"ERROR"}, "同期対象のRoblox Partがありません")
+            self.report({"ERROR"}, tr("There are no Roblox Parts enabled for synchronization"))
             return {"CANCELLED"}
 
         filepath = bpy.path.ensure_ext(self.filepath, self.filename_ext)
@@ -377,7 +389,7 @@ class RBX_OT_ExportJson(Operator, ExportHelper):
         with open(filepath, "w", encoding="utf-8", newline="\n") as output:
             json.dump(payload, output, ensure_ascii=False, indent=2)
             output.write("\n")
-        self.report({"INFO"}, f"{len(payload['parts'])} partsを書き出しました")
+        self.report({"INFO"}, trf("Exported {count} parts", count=len(payload["parts"])))
         return {"FINISHED"}
 
 

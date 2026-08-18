@@ -83,7 +83,7 @@ def serialize_scene(scene):
     objects.sort(key=lambda obj: (obj.name.casefold(), obj.rbx_primitive_sync.guid))
     return {
         "schema": SCHEMA_ID,
-        "generator": {"name": "Roblox Primitive Sync", "version": "0.10.7"},
+        "generator": {"name": "Roblox Primitive Sync", "version": "0.11.0"},
         "model": {
             "id": scene.get("rbx_model_guid", ""),
             "name": settings.model_name or scene.name,
