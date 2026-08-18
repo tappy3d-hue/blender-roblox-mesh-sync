@@ -14,6 +14,8 @@ import json
 import bpy
 from bpy.types import Operator
 
+from .i18n import trf
+
 from .material_library import (
     EMISSIVE_MATERIALS,
     FIXED_ROUGHNESS,
@@ -109,7 +111,7 @@ def _image_node(nodes, links, path, vector, location, label, *, non_color=False)
 
 def _build_material(material, material_name, color, transparency, studs_per_unit):
     if material_name not in MATERIAL_NAMES:
-        raise ValueError(f"Roblox Materialライブラリにありません: {material_name}")
+        raise ValueError(trf("Roblox Material is not in the library: {material}", material=material_name))
     material.use_nodes = True
     material.diffuse_color = (*color, 1.0 - transparency)
     material[PREVIEW_MATERIAL_KEY] = True
@@ -392,7 +394,7 @@ class RBX_OT_RefreshMaterialPreview(Operator):
 
     def execute(self, context):
         count = refresh_selected(context)
-        self.report({"INFO"}, f"{count}個のRoblox Materialプレビューを更新しました")
+        self.report({"INFO"}, trf("Updated Roblox Material previews for {count} objects", count=count))
         return {"FINISHED"}
 
 

@@ -8,8 +8,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.10.7.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.10.7.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.11.0.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.11.0.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -53,6 +53,10 @@ Studioプラグインを更新する場合はRojoをPATHへ追加し、`Update S
 5. `Validate Scene`で検証してから`Export JSON`を実行します。
 
 Object Modeでの移動、回転、拡縮を前提としています。Edit Modeで頂点を変更したオブジェクトは検証エラーになります。
+
+Primitive SyncとMesh Syncの操作は、Nパネルの`Roblox > Roblox Sync`へ統合されています。接続、選択数、Studioへの送信を常時表示し、作成・変換、外観・最適化、物理・描画、同期設定、高度な機能は折りたたみ式です。選択中のPart／MeshPart／Emptyに応じて`Selected Object`の内容が切り替わります。
+
+アドオンUIはBlender標準の言語設定へ追従します。`編集 > プリファレンス > インターフェース > 翻訳`で`Interface`を有効にし、言語を`Japanese`にすると日本語、`English`にすると英語で、パネル、設定、ツールチップ、完了・警告・エラーメッセージを表示します。
 
 ### Tube近似
 
@@ -100,7 +104,7 @@ rojo build .\roblox_plugin\default.project.json --output RobloxPrimitiveSync.rbx
 
 1. Rojoで生成した`.rbxm`をStudioへ読み込み、`Save as Local Plugin`でローカルプラグインにします。
 2. BlenderからStudioへMeshPart／PBR画像を新規登録する場合は、Studioの`File > Beta Features`で`CreateAssetAsync Lua API`を有効にしてStudioを再起動します。この項目は標準Partだけの同期やStudioからBlenderへの送信には不要です。項目自体が表示されないStudioでは、同APIが正式提供済みかStudioが古い可能性があるため、まずStudioを最新版へ更新してください。
-3. 初回だけBlenderの`Nパネル > Roblox > Mesh Sync`で`Allow Studio Connection`を押します。ローカルペアリングが60秒間、1回だけ許可されます。
+3. 初回だけBlenderの`Nパネル > Roblox > Roblox Sync`で`Allow Studio Connection`を押します。ローカルペアリングが60秒間、1回だけ許可されます。
 4. Studioの`Blender Mesh Sync`でBlenderに表示されているポート番号を確認し、Studioの`Port`欄を同じ番号にして`Connect`を押します。トークンや接続コードのコピーは不要です。入力したポートと自動取得したトークンは保存され、次回以降は自動接続します。接続を破棄する場合は`Forget Connection`を使用します。
 
 接続確認は入力ポートを1秒で確認し、応答がない場合だけ既定ポート`27182`を1回確認します。通常のメッシュ転送とは別の短いタイムアウトを使うため、古い接続情報が残っていてもConnectが約30秒停止することはありません。
@@ -119,7 +123,7 @@ StudioのOutputに古いバージョン名と`Mesh Sync schema or revision misma
 
 1. Blenderで送信する静的Meshを選択します。
    - 形状を常に連動させたい複製は、基準にするオブジェクトを最後に選び、`Link Mesh Data to Active`を押します。これは`Ctrl+L > Link Object Data`と同じ処理で、形状だけでなくUV、頂点カラー、マテリアルも共有します。
-2. `Selected Mesh Settings`で外観を設定します。
+2. `Selected Object`で外観を設定します。
    - `Auto` — PBR画像、既存頂点カラー、Roblox Materialの順で自動選択
    - `Texture / PBR` — Base Color、Roughness、Metallic、Normalの接続画像を使用
    - `Vertex Color` — アクティブな既存Color Attributeを使用
@@ -151,15 +155,17 @@ ColorはBlender内部のシーンリニアRGBとRobloxのsRGBを送受信時に�
 1. BlenderでMesh Sync Serverを起動し、Studioプラグインを接続します。
 2. StudioでPart、MeshPart、Model、Folderを選択します。
 3. 必要に応じてStudioプラグインの`Position`、`Rotation`、`Scale`をオフにします。既存Blenderオブジェクトではオフにした値を維持します。
-4. `Send Selection to Blender`を押します。ModelまたはFolderを1つ選ぶだけで、配下の全子孫にあるPart／MeshPartが再帰的に収集されます。途中にConfiguration、Accessory、BasePartなどが挟まっていても探索を継続します。既定の`Auto Apply from Studio`では直ちにBlenderへ適用され、適用全体はBlenderのUndo対象です。
+4. `Send Selection to Blender`を押します。ModelまたはFolderを1つ選ぶだけで、配下の全子孫が再帰的に調査されます。途中にConfiguration、Accessory、BasePartなどが挟まっていても探索を継続し、通常Part／MeshPartとUnion／Intersectが混在していても1つのリビジョンへまとめて送信します。既定の`Auto Apply from Studio`では直ちにBlenderへ適用されます。適用前後を一対のBlender Undoチェックポイントとして記録するため、置換後にCtrl+Zを1回押すとインポート直前のオブジェクトとメッシュデータへ復元されます。
 
 確認してから反映したい場合だけ`Auto Apply from Studio`をオフにし、`Review Incoming`と`Apply Studio Selection`を使用します。自動適用中に同じGUIDのローカル変更が見つかった場合は、明示的にStudioから送った内容を採用します。
 
 PartはBlenderプリミティブへ、Studio由来の新規MeshPartはEditableMeshから静的Meshへ復元されます。Blender由来で同じGUIDを持つ既存MeshPartは、既定の`Preserve Blender Geometry`により元のMesh Data、四角面／N-gon、モディファイア、Linked Mesh Data、原点を維持し、Transform・外観・物理設定だけを更新します。StudioでMeshIdが変更されていた場合も形状を上書きせず警告します。
 
-新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。Blender由来MeshPartの形状を読み取れない場合はプロパティだけを更新し、Studio由来の読み取れないMeshPartだけをスキップします。
+新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。MeshPartの形状を所有権または共有権限の関係で読み取れない場合は、選択の一部だけを送らず、その送信全体を中止します。
 
-複数選択またはModel／Folderの再帰送信では、読み取り権限がないMeshPartと、公開APIから形状を取得できないUnionOperationなどの未対応BasePartをスキップし、標準Partと読み取り可能なMeshPartは送信を続行します。スキップした個数、オブジェクトパス、取得できる場合はAsset IDをStudioのステータスとOutputへ表示します。同じ読み取り不可Assetを共有するMeshPartは権限確認と警告を1回にまとめます。選択対象がスキップ対象だけだった場合は、空の同期を作らず送信を中止します。
+複数選択またはModel／Folderの再帰送信では、読み取り権限がないMeshPartが1つでもあれば、オブジェクト名と権限理由をStudioのステータスとOutputへ表示し、Blenderに新しいリビジョンを作らず送信全体を中止します。
+
+Union／IntersectのCSG転送は、クローンを自動分解して正負オペランドと入れ子構造を`roblox-mesh-sync-reverse/4`で送り、Blenderの一時的なExact Booleanから単一Meshへ焼き込みます。分解後のBlockMesh、CylinderMesh、およびSpecialMeshのBrick／Sphere／Cylinder／Wedge／CornerWedgeは、組み込み形状とScale／Offsetを再現します。SpecialMeshのFileMeshとMeshPartはEditableMeshとして実形状を送り、所有権または共有権限で読み取れない場合はBlenderへ何も送らず中止します。計算用オペランド、カッター、専用Collection、Booleanモディファイアは最終的に残しません。完成Meshは通常のオブジェクトと同様に直接移動・回転・スケールでき、元Unionの同期ID、親Model、所属Folderを引き継ぎます。通常オブジェクトとCSGが混在する送信でも同じ階層内へ配置されます。
 
 SurfaceAppearance、MaterialVariant、MeshPart Textureの画像がAsset権限により読み取れない場合は、画像だけをスキップし、形状、Transform、Material、Color、Transparency、物理設定をBlenderへ送ります。Blender上では既存Materialを変更せず、権限不足の警告をObjectへ保存します。そのObjectをStudioへ戻した場合は、既存のSurfaceAppearance、MaterialVariant、TextureIDを引き継ぎ、読み取れなかった外観を単色で上書きしません。
 
@@ -169,7 +175,15 @@ StudioのCFrameはワールド座標として受信し、BlenderでEmptyを親�
 
 BlenderからStudioへの同期ルート名は保存済み`.blend`のファイル名で、Workspace直下のFolderとして作成されます。Blender Collectionはその中のFolderへ変換され、Collectionに属さないオブジェクトは同期ルート直下へ配置されます。独自の`Scene` Modelは作成しません。Emptyはシーン既定またはEmptyごとの上書きでModel／Folder／Ignoreを選択できます。CollectionやEmptyの意味とGUIDはAttributeへ保持されるため、Studio上の表示クラスとBlender上の階層を分離できます。今回同期したCollectionに対応する旧Modelだけは、子を維持したままFolderへ移行します。
 
-往復同期では、選択物の祖先にある`BlenderModelId`と同期ルート種別を再利用します。`Preserve Blender Hierarchy`が有効な既存オブジェクトでは、全Collection所属、複数Collection所属、親Empty、Collection／Emptyの親子関係をBlender側のまま維持します。新規オブジェクトまたは同設定が無効な場合だけStudioの階層を反映します。同期ルート自体は子Hierarchyとして再送信しないため、`Studio Selection.001`のようなルートが往復ごとに増えることはありません。異なる同期ファイルのオブジェクト、または同期済み／未所属オブジェクトを混ぜた送信は停止します。
+往復同期では、選択物の祖先にある`BlenderModelId`と同期ルート種別を再利用します。`Preserve Blender Hierarchy`が有効な既存オブジェクトでは、全Collection所属、複数Collection所属、親Empty、Collection／Emptyの親子関係をBlender側のまま維持します。新規オブジェクトまたは同設定が無効な場合だけStudioの階層を反映します。同期ルート自体は子Hierarchyとして再送信しないため、`Studio Selection.001`のようなルートが往復ごとに増えることはありません。異なる同期ファイルのオブジェクト、または同期済みEmptyの階層外にある真に未所属のオブジェクトを混ぜた送信は停止します。
+
+Blenderで同期済みの親Emptyを選んで`Send Selected to Studio`を押すと、その配下にある有効Meshを自動収集し、Robloxの対応Model配下を完全同期します。追加したMeshは同じModelへ入り、Blenderから削除した同期ID付きPart／MeshPart／Union／IntersectはStudioからも削除されます。同期境界のModel、Script、Light、Attachment、未同期Partは維持され、空になった同期済み子Model／Folderだけ安全に削除されます。Emptyを選ばずMeshだけを送った場合は従来どおり部分更新となり、未選択の子は削除しません。新規Meshは同期済み親Emptyから同期元を継承するため、親子として追加した置換Meshを別送する必要はありません。
+
+### 同じAppearanceの選択とMeshPart統合
+
+Mesh Settingsの`Appearance Selection and Merge`では、アクティブオブジェクトとStudioへの最終送信Appearanceが同じ対象を選択できます。Scopeは直接の親Objectが同じ`Same Parent`と、現在の選択だけを絞り込む`Current Selection`から選びます。`Exclude Roblox Parts`は既定オンで、オフにすると同じAppearanceのPartも選択しますが、PartをMeshPartへ統合することはありません。
+
+`Select Same Appearance`の後に任意のMeshPartを追加選択し、`Merge Selected to Active Appearance`を押すと、BlenderのCtrl+J相当でアクティブMeshPartへ統合します。親、原点、同期GUID、物理設定をアクティブ側から維持し、全体のMaterial SlotをアクティブAppearanceへ統一します。Partが混ざっている場合は変更前に停止します。非アクティブ側のModifierはCtrl+Jと同様に失われる可能性があります。統合元GUIDは結果へ記録されるため、統合MeshPartだけをStudioへ送っても旧MeshPart／Unionを同じUndo記録内で削除でき、Ctrl+Z 1回で復元できます。
 
 Studio由来ドキュメントの同期IDは各Blender Objectへ保存し、受け皿専用の`Studio Selection` Collectionは作成しません。旧方式の同名Collectionが現在の同期対象に対応する場合は、子Collection、Empty、オブジェクトをシーンへ安全に移してから受け皿だけを削除します。
 
@@ -185,4 +199,4 @@ Blender由来の平坦なオブジェクトをStudio側だけでModel／Folder�
 - Normal MapはRobloxが要求するOpenGLタンジェント空間形式を使用してください。
 - 選択送信はGUIDが一致するStudio上の生成MeshPartだけを更新し、未選択の生成物と`Studio Only`は削除しません。
 - 資産はStudioへログイン中のユーザーに作成されます。形状や画像の内容が変わると、新しいAsset IDを作成します。
-- Mesh／Image Assetの登録とインスタンスのステージングが完了してから、Workspace・MaterialServiceを1つのUndo記録内で更新します。更新中に失敗した場合は記録をCancelして変更を巻き戻します。Asset登録そのものはStudioのUndo対象外です。
+- Mesh／Image Assetの登録とインスタンスのステージングが完了してから、Workspace・MaterialServiceを1つのUndo記録内で更新します。置換前のInstanceは`Destroy()`せずUndo可能な状態でDataModelから取り外すため、Ctrl+Zで元のMeshPart・階層・MaterialVariantを復元できます。更新中に失敗した場合は記録をCancelして変更を巻き戻します。Asset登録そのものはStudioのUndo対象外です。

@@ -186,7 +186,18 @@ Workspace
 
 ## 12. 双方向同期とMaterial Preview
 
-- BlenderからStudioはPartとMeshPartを混在できる`roblox-mesh-sync/4`、StudioからBlenderは`roblox-mesh-sync-reverse/3`を使用する。Studioは従来の`roblox-mesh-sync/1`～`/3`、Blenderは従来の`roblox-mesh-sync-reverse/1`～`/2`も受信する。
+- BlenderのPrimitive SyncとMesh Syncは`Roblox Sync`という単一UIへ統合し、Part／MeshPart／Emptyを同じ送信操作で扱う。選択物に応じた設定だけを表示し、低頻度の設定と旧JSON書き出しは折りたたみ内へ配置する。UI、プロパティ、ツールチップ、処理結果、警告、エラーはBlender標準の言語・Interface翻訳設定に追従し、日本語と英語を切り替える。
+- BlenderからStudioはPartとMeshPartを混在できる`roblox-mesh-sync/4`を使用する。通常のStudioからBlenderは`roblox-mesh-sync-reverse/3`、CSG転送は正負オペランドと入れ子参照を追加した`roblox-mesh-sync-reverse/4`を使用する。CSGはBlenderで評価済みの単一Meshへ焼き込み、元Unionの`BlenderObjectId`を往復IDとして維持する。Studioは従来の`roblox-mesh-sync/1`～`/3`、Blenderは従来の`roblox-mesh-sync-reverse/1`～`/3`も受信する。
+- CSG再構築用のオペランド、カッター、Collection、Booleanモディファイアは取り込み処理中だけ存在させ、最終結果を単一Meshへ焼き込んだ後に削除する。同一平面の負オペランドは計算専用複製だけを1.0001倍し、入れ子結果は親ノード境界で評価済みMeshへ固定して、連結成分を失わず次の演算へ渡す。
+- Studioの送信UIは`Send Selection to Blender`へ統合する。選択したModel／Folder配下を再帰的に調査し、通常Part／MeshPartとUnion／Intersectが混在する場合も、通常オブジェクト、CSGツリー、メッシュ／画像blob、Hierarchyを1つのreverse/4リビジョンへまとめる。Blender側は通常オブジェクトを従来形式のまま適用し、CSGだけを単一Meshへ焼き込む。
+- Union／IntersectはStudioで分離した正負オペランドから再構築する。BlockMesh／CylinderMeshと、SpecialMeshのBrick／Sphere／Cylinder／Wedge／CornerWedgeは組み込み形状およびScale／Offsetを反映する。SpecialMeshのFileMeshとMeshPartはEditableMeshの実形状を転送し、所有権または共有権限で読み取れない場合は部分送信せず、そのリビジョン全体を中止する。最終オブジェクトには元Union／Intersectの`parentId`、`primaryCollectionId`、`collectionIds`を適用し、親ModelをBlender Empty、所属FolderをCollectionとして通常オブジェクトと同じHierarchyへ配置する。`Roblox CSG Results`などの実装専用Collectionは残さない。
+- `plugin:Negate()`が負オペランドをPartではなくUnionOperation／IntersectOperationとして復元した場合も、負側の入れ子CSGとして再帰的にツリー化する。
+- StudioからBlenderへの適用は、自動適用・手動適用のどちらも適用前後を明示的なUndoチェックポイントとして記録する。Ctrl+Z 1回で置換前のObjectとMeshデータを復元できること。
+- BlenderからStudioへの置換では、ChangeHistoryServiceの記録中に旧Instanceへ`Destroy()`を呼ばない。旧Instanceは`Parent = nil`で取り外し、Ctrl+Zで同一Instance、その階層、属性、見た目を復元可能にする。
+- Blenderで最上位の選択Emptyを完全同期境界とし、有効な子孫Meshと範囲内の全Emptyを自動収集する。`roblox-mesh-sync/4`の任意`replaceScopes`は`hierarchyId`、`mode=REPLACE_DESCENDANTS`、範囲内に現存する`presentSourceObjectIds`を持つ。Studioは対応する既存Model自体を変更せず、受信されずBlenderにも現存しない同期ID付きBasePartだけをUndo記録内で取り外す。保護対象の子がない同期済み子Model／Folderだけを削除する。フィールドがないMesh単体送信は部分更新であり、未受信物を削除しない。
+- Studioから受信したEmptyにはdocumentの同期元ID・名前・ルート種別を保存し、新規の子Meshは最寄りの親Emptyから同期元を継承する。旧ファイルのEmptyは、配下の同期済みMeshが単一の同期元を示す場合だけメタデータを補完する。既存Modelの再利用は同期GUID一致だけで行い、名前一致は使用しない。
+- Blenderの`Select Same Appearance`は既存の送信Appearance hashを比較し、直接の親Objectが同じ範囲または現在選択中の範囲から一致物を選ぶ。`Exclude Roblox Parts`は既定オンとし、オフ時はPartも選択だけ許可する。`Merge Selected to Active Appearance`はPart混在時に停止し、MeshPartだけをCtrl+J相当でアクティブへ統合する。結果はアクティブの親、原点、GUID、物理設定を維持し、Material SlotをアクティブAppearanceへ統一する。
+- 統合MeshPartのforward instanceは任意の`replacesObjectIds`に消えた統合元GUIDを保持する。Studioは自己参照、同一revision内のinstance参照、重複要求を拒否し、新しいMeshPartの配置後に一致する旧BasePartを同じChangeHistory記録内で取り外す。存在しない置換先の再送信は成功扱いとする。
 - `Send Selected to Studio`は、Roblox Partとして登録済みのBlenderオブジェクトを標準Part、それ以外の有効MeshをMeshPartとして同じリビジョンで送る。位置・回転・スケールは個別に更新を無効化でき、新規作成時は初期Transformを必ず設定する。
 - `.blend`名のFolderを同期ルートにし、CollectionはFolderとして転送する。Collection未所属オブジェクトはルート直下へ配置し、`Scene` Modelや固定の`Generated Meshes`フォルダーは作成しない。Emptyはシーン既定と個別上書きによりModel／Folder／Ignoreを選択でき、元のHierarchy種別とGUIDはAttributeへ保持する。
 - Studioの選択Model／Folderを再帰的に送信し、Partは対応プリミティブ、MeshPartはEditableMeshとしてBlenderへ復元する。

@@ -163,6 +163,11 @@ EMPTY_EXPORT_OVERRIDE_ITEMS = (
     *EMPTY_EXPORT_MODE_ITEMS,
 )
 
+APPEARANCE_SELECTION_SCOPE_ITEMS = (
+    ("SAME_PARENT", "Same Parent", "Search objects with the same direct parent as the active object"),
+    ("CURRENT_SELECTION", "Current Selection", "Filter only the objects that are currently selected"),
+)
+
 
 class RBX_PG_ReverseConflict(PropertyGroup):
     object_id: StringProperty(name="Object ID")
@@ -291,6 +296,17 @@ class RBX_PG_SceneSettings(PropertyGroup):
         items=EMPTY_EXPORT_MODE_ITEMS,
         default="MODEL",
         description="Default Studio representation for Blender Empty parents",
+    )
+    mesh_appearance_selection_scope: EnumProperty(
+        name="Scope",
+        items=APPEARANCE_SELECTION_SCOPE_ITEMS,
+        default="SAME_PARENT",
+        description="Objects searched by Select Same Appearance",
+    )
+    mesh_appearance_exclude_parts: BoolProperty(
+        name="Exclude Roblox Parts",
+        default=True,
+        description="Exclude Roblox Part objects from appearance selection; merging always rejects Parts",
     )
     reverse_pending_revision: IntProperty(name="Incoming Revision", default=0)
     reverse_conflicts: CollectionProperty(type=RBX_PG_ReverseConflict)

@@ -55,7 +55,7 @@ class MeshSyncServerTests(unittest.TestCase):
         data = json.loads(body)
         self.assertTrue(data["ok"])
         self.assertEqual(data["version"], 3)
-        self.assertEqual(data["addonVersion"], "0.10.7")
+        self.assertEqual(data["addonVersion"], "0.11.0")
         self.assertIn("roblox-mesh-sync/4", data["schemas"])
         self.assertIn("roblox-mesh-sync/3", data["schemas"])
         self.assertIn("roblox-mesh-sync/2", data["schemas"])
@@ -128,6 +128,32 @@ class MeshSyncServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["revision"], 1)
         self.assertEqual(self.server.pending_reverse.document["model"]["name"], "Studio")
+
+    def test_reverse_v4_csg_preview_is_validated_and_queued_without_blobs(self):
+        transform = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+        document = {
+            "schema": "roblox-mesh-sync-reverse/4",
+            "model": {"id": "model", "name": "Union", "rootKind": "STUDIO_SELECTION"},
+            "objects": [{
+                "id": "part", "kind": "PART", "partType": "Block",
+                "size": [1, 1, 1], "cframe": transform,
+            }],
+            "meshes": [], "images": [], "appearances": [], "hierarchy": [],
+            "csg": [{
+                "id": "union", "name": "Union", "op": "union",
+                "size": [1, 1, 1], "cframe": transform,
+                "operands": [{"role": "positive", "kind": "instance", "ref": "part"}],
+            }],
+            "csgRoots": [{"kind": "csg", "ref": "union", "name": "Union"}],
+        }
+        begin = json.dumps({"transferId": "csg", "document": document}).encode()
+        status, _ = self.fetch("/v2/reverse/begin", "test-token", "POST", begin)
+        self.assertEqual(status, 200)
+        commit = json.dumps({"transferId": "csg"}).encode()
+        status, body = self.fetch("/v2/reverse/commit", "test-token", "POST", commit)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["revision"], 1)
+        self.assertEqual(self.server.pending_reverse.document["csg"][0]["id"], "union")
 
     def test_reverse_material_without_images_accepts_luau_empty_maps(self):
         document = {

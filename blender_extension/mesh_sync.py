@@ -30,7 +30,8 @@ from .mesh_sync_core import (
 )
 from .mesh_sync_server import SERVER
 from .geometry import mesh_signature
-from .material_preview import PREVIEW_MATERIAL_KEY
+from .i18n import tr, trf
+from .material_preview import PREVIEW_MATERIAL_KEY, refresh_object_preview, restore_object_preview
 from .serialization import serialize_object_parts
 
 
@@ -46,6 +47,7 @@ DOCUMENT_ROOT_KIND_KEY = "rbx_mesh_document_root_kind"
 MATERIAL_VARIANT_KEY = "rbx_mesh_material_variant"
 APPEARANCE_METADATA_KEY = "rbx_mesh_appearance_metadata"
 APPEARANCE_AVAILABLE_KEY = "rbx_mesh_appearance_available"
+REPLACES_OBJECT_IDS_KEY = "rbx_mesh_replaces_object_ids"
 
 # Blender can produce different generated UV values when the same Mesh data is
 # evaluated independently through equivalent Bevel modifiers. Reusing one
@@ -90,19 +92,23 @@ def _ensure_object_guid(obj):
 def _validate_primitive(obj):
     settings = obj.rbx_primitive_sync
     if any(float(component) <= 0 for component in obj.scale):
-        raise ValueError(f"{obj.name}: negative or zero scale is not supported")
+        raise ValueError(trf("{name}: Negative or zero scale is not supported", name=obj.name))
     if obj.matrix_world.to_3x3().determinant() <= 0:
-        raise ValueError(f"{obj.name}: mirrored transforms are not supported")
+        raise ValueError(trf("{name}: Mirrored transforms are not supported", name=obj.name))
     if has_shear(obj.matrix_world):
-        raise ValueError(f"{obj.name}: shear is not supported")
+        raise ValueError(trf("{name}: Shear is not supported", name=obj.name))
     if any(modifier.show_viewport for modifier in obj.modifiers):
-        raise ValueError(f"{obj.name}: Roblox Parts cannot have active modifiers")
+        raise ValueError(trf("{name}: Roblox Parts cannot have active modifiers", name=obj.name))
     if obj.get("rbx_mesh_signature", "") != mesh_signature(obj.data):
-        raise ValueError(
-            f"{obj.name}: プリミティブの頂点が変更されています。Object Modeで変形してください"
-        )
+        raise ValueError(trf(
+            "{name}: Primitive vertices were edited. Transform the object in Object Mode.",
+            name=obj.name,
+        ))
     if settings.part_type not in {"Block", "Ball", "Cylinder", "Wedge", "CornerWedge", "Tube"}:
-        raise ValueError(f"{obj.name}: unsupported Roblox Part type {settings.part_type}")
+        raise ValueError(trf(
+            "{name}: Unsupported Roblox Part type {part_type}",
+            name=obj.name, part_type=settings.part_type,
+        ))
 
 
 def _axis_vector(vector):
@@ -179,16 +185,19 @@ def _collect_mesh(obj, depsgraph):
     try:
         mesh.calc_loop_triangles()
         if not mesh.vertices or not mesh.loop_triangles:
-            raise ValueError("mesh has no triangles")
+            raise ValueError(tr("Mesh has no triangles"))
         if len(mesh.loop_triangles) > MAX_TRIANGLES:
-            raise ValueError(f"{len(mesh.loop_triangles)} triangles exceeds the {MAX_TRIANGLES} limit")
+            raise ValueError(trf(
+                "{count} triangles exceeds the {limit} limit",
+                count=len(mesh.loop_triangles), limit=MAX_TRIANGLES,
+            ))
 
         minimum = [min(vertex.co[axis] for vertex in mesh.vertices) for axis in range(3)]
         maximum = [max(vertex.co[axis] for vertex in mesh.vertices) for axis in range(3)]
         center = tuple((minimum[axis] + maximum[axis]) * 0.5 for axis in range(3))
         local_size = tuple(maximum[axis] - minimum[axis] for axis in range(3))
         if any(value <= 1e-8 for value in local_size):
-            raise ValueError("mesh must have non-zero size on all three axes")
+            raise ValueError(tr("Mesh must have non-zero size on all three axes"))
 
         vertices = [
             rounded(_axis_vector(tuple(vertex.co[axis] - center[axis] for axis in range(3))))
@@ -287,16 +296,19 @@ def _linear_to_srgb(value):
 def _image_bytes(image, color_map, selected_channel=None):
     width, height = int(image.size[0]), int(image.size[1])
     if width <= 0 or height <= 0:
-        raise ValueError(f"image {image.name} has no pixels")
+        raise ValueError(trf("Image {name} has no pixels", name=image.name))
     if width > MAX_IMAGE_SIZE or height > MAX_IMAGE_SIZE:
-        raise ValueError(f"image {image.name} is {width}x{height}; maximum is 1024x1024")
+        raise ValueError(trf(
+            "Image {name} is {width}x{height}; maximum is 1024x1024",
+            name=image.name, width=width, height=height,
+        ))
     try:
         pixels = tuple(image.pixels[:])
     except RuntimeError as error:
-        raise ValueError(f"image {image.name} could not be read: {error}") from error
+        raise ValueError(trf("Image {name} could not be read: {error}", name=image.name, error=error)) from error
     expected = width * height * 4
     if len(pixels) != expected:
-        raise ValueError(f"image {image.name} returned an unexpected pixel count")
+        raise ValueError(trf("Image {name} returned an unexpected pixel count", name=image.name))
 
     output = bytearray(expected)
     for output_y in range(height):
@@ -340,7 +352,7 @@ def _appearance_for(obj, has_uv, has_colors, image_records, image_blobs):
     requested_mode = settings.mesh_blender_appearance_mode
     materials = [] if use_roblox_material else _used_materials(obj)
     if len(materials) > 1 and requested_mode in {"AUTO", "TEXTURE"}:
-        raise ValueError("Texture/PBR Mesh Sync requires one baked/atlas material per object")
+        raise ValueError(tr("Texture/PBR Mesh Sync requires one baked/atlas material per object"))
     material = materials[0] if materials else None
     images, material_color = (
         ({}, [1.0, 1.0, 1.0])
@@ -350,11 +362,11 @@ def _appearance_for(obj, has_uv, has_colors, image_records, image_blobs):
         use_roblox_material, requested_mode, bool(images), has_colors,
     )
     if mode == "TEXTURE" and not has_uv:
-        raise ValueError("Texture/PBR appearance requires an active UV map")
+        raise ValueError(tr("Texture/PBR appearance requires an active UV map"))
     if mode == "TEXTURE" and not images:
-        raise ValueError("Texture/PBR appearance has no connected image maps")
+        raise ValueError(tr("Texture/PBR appearance has no connected image maps"))
     if mode == "VERTEX" and not has_colors:
-        raise ValueError("Vertex Color appearance requires an active Color Attribute")
+        raise ValueError(tr("Vertex Color appearance requires an active Color Attribute"))
 
     appearance = {
         "mode": mode,
@@ -403,6 +415,31 @@ def _appearance_for(obj, has_uv, has_colors, image_records, image_blobs):
     return appearance
 
 
+def _export_appearance_hash(obj, depsgraph):
+    """Return the exact appearance hash used by Studio export."""
+
+    settings = obj.rbx_primitive_sync
+    if settings.is_roblox_part:
+        return _appearance_for(obj, False, False, {}, {})["hash"]
+    _payload, _digest, _center, _size, has_uv, has_colors = _collect_mesh(obj, depsgraph)
+    return _appearance_for(obj, has_uv, has_colors, {}, {})["hash"]
+
+
+def _replacement_object_ids(obj):
+    raw = obj.get(REPLACES_OBJECT_IDS_KEY, "")
+    if not isinstance(raw, str) or not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        obj.pop(REPLACES_OBJECT_IDS_KEY, None)
+        return []
+    if not isinstance(values, list):
+        obj.pop(REPLACES_OBJECT_IDS_KEY, None)
+        return []
+    return sorted({value for value in values if _valid_uuid(value)})
+
+
 def _blend_model_name(context, fallback):
     filepath = getattr(bpy.data, "filepath", "")
     return Path(filepath).stem if filepath else (fallback or context.scene.name)
@@ -429,45 +466,138 @@ def _document_root_for_collection(scene, collection, parents):
     return None
 
 
+def _object_document_scope(scene, obj, parents):
+    """Resolve an object's document, allowing new children to inherit from an Empty."""
+
+    current = obj
+    while current is not None:
+        model_id = _valid_uuid(current.get(DOCUMENT_MODEL_GUID_KEY, ""))
+        if model_id:
+            return {
+                "id": model_id,
+                "name": current.get(DOCUMENT_MODEL_NAME_KEY, "Studio Selection"),
+                "rootKind": current.get(DOCUMENT_ROOT_KIND_KEY, "STUDIO_SELECTION"),
+                "collection": None,
+            }
+        current = current.parent
+    object_roots = {
+        root
+        for collection in obj.users_collection
+        if (root := _document_root_for_collection(scene, collection, parents)) is not None
+    }
+    if len(object_roots) > 1:
+        raise ValueError(trf(
+            "{name}: The object belongs to multiple synchronized root Collections", name=obj.name,
+        ))
+    if object_roots:
+        root = next(iter(object_roots))
+        return {
+            "id": root.get("rbx_model_guid", ""),
+            "name": root.name,
+            "rootKind": root.get(ROOT_KIND_KEY, "STUDIO_SELECTION"),
+            "collection": root,
+        }
+    return None
+
+
+def _backfill_empty_document_scope(scene, empty, parents):
+    """Migrate old imported Empties from unambiguous synchronized descendants."""
+
+    if _valid_uuid(empty.get(DOCUMENT_MODEL_GUID_KEY, "")):
+        return
+    scopes = {}
+    pending = list(empty.children)
+    while pending:
+        child = pending.pop()
+        pending.extend(child.children)
+        if child.type != "MESH":
+            continue
+        scope = _object_document_scope(scene, child, parents)
+        if scope:
+            scopes[scope["id"]] = scope
+    if len(scopes) > 1:
+        raise ValueError(trf(
+            "{name}: Complete sync is unavailable because descendants belong to multiple synchronization sources",
+            name=empty.name,
+        ))
+    if len(scopes) == 1:
+        scope = next(iter(scopes.values()))
+        empty[DOCUMENT_MODEL_GUID_KEY] = scope["id"]
+        empty[DOCUMENT_MODEL_NAME_KEY] = scope["name"]
+        empty[DOCUMENT_ROOT_KIND_KEY] = scope["rootKind"]
+
+
 def _selection_document_root(scene, selected, parents):
     scopes = {}
     has_unscoped_object = False
     for obj in selected:
-        direct_model_id = obj.get(DOCUMENT_MODEL_GUID_KEY, "")
-        if _valid_uuid(direct_model_id):
-            scopes[direct_model_id] = {
-                "id": direct_model_id,
-                "name": obj.get(DOCUMENT_MODEL_NAME_KEY, "Studio Selection"),
-                "rootKind": obj.get(DOCUMENT_ROOT_KIND_KEY, "STUDIO_SELECTION"),
-                "collection": None,
-            }
-            continue
-        object_roots = {
-            root
-            for collection in obj.users_collection
-            if (root := _document_root_for_collection(scene, collection, parents)) is not None
-        }
-        if len(object_roots) > 1:
-            raise ValueError(f"{obj.name}: 複数の同期ルートCollectionに所属しています")
-        if object_roots:
-            root = next(iter(object_roots))
-            model_id = root.get("rbx_model_guid", "")
-            scopes[model_id] = {
-                "id": model_id,
-                "name": root.name,
-                "rootKind": root.get(ROOT_KIND_KEY, "STUDIO_SELECTION"),
-                "collection": root,
-            }
+        scope = _object_document_scope(scene, obj, parents)
+        if scope:
+            scopes[scope["id"]] = scope
         else:
             has_unscoped_object = True
     if len(scopes) > 1:
-        raise ValueError("異なる同期ルートのオブジェクトは分けて送信してください")
+        raise ValueError(tr("Objects from different synchronization roots must be sent separately"))
     if scopes and has_unscoped_object:
-        raise ValueError("同期済みオブジェクトと未所属オブジェクトは分けて送信してください")
+        raise ValueError(tr("Synchronized and unassigned objects must be sent separately"))
     return next(iter(scopes.values()), None)
 
 
-def _collect_hierarchy(scene, selected, *, parents=None, document_root=None):
+def _enabled_export_mesh(obj):
+    if obj.type != "MESH":
+        return False
+    settings = obj.rbx_primitive_sync
+    return bool(
+        (settings.is_roblox_part and settings.sync_enabled)
+        or (not settings.is_roblox_part and settings.mesh_sync_enabled)
+    )
+
+
+def _top_level_selected_empties(context):
+    selected = {obj for obj in context.selected_objects if obj.type == "EMPTY"}
+
+    def has_selected_ancestor(empty):
+        current = empty.parent
+        while current is not None:
+            if current in selected:
+                return True
+            current = current.parent
+        return False
+
+    return sorted(
+        (
+            empty for empty in selected
+            if not has_selected_ancestor(empty)
+        ),
+        key=lambda item: (item.name.casefold(), item.as_pointer()),
+    )
+
+
+def _descendant_export_meshes(empty):
+    result = []
+    pending = list(empty.children)
+    while pending:
+        child = pending.pop()
+        pending.extend(child.children)
+        if _enabled_export_mesh(child):
+            result.append(child)
+    return result
+
+
+def _scope_empties(selected_empties):
+    result = set(selected_empties)
+    pending = [child for empty in selected_empties for child in empty.children]
+    while pending:
+        child = pending.pop()
+        pending.extend(child.children)
+        if child.type == "EMPTY":
+            result.add(child)
+    return result
+
+
+def _collect_hierarchy(
+    scene, selected, *, parents=None, document_root=None, scope_empties=(),
+):
     """Build collection/empty hierarchy records without depending on transforms."""
 
     parents = parents or _collection_parent_map(scene)
@@ -484,7 +614,16 @@ def _collect_hierarchy(scene, selected, *, parents=None, document_root=None):
                 included_collections.add(current)
                 current = parents.get(current)
 
-    empty_objects = set()
+    for empty in scope_empties:
+        for collection in empty.users_collection:
+            current = collection
+            while current and current != scene.collection:
+                if current == document_root:
+                    break
+                included_collections.add(current)
+                current = parents.get(current)
+
+    empty_objects = set(scope_empties)
     for obj in selected:
         current = obj.parent
         while current is not None:
@@ -545,12 +684,12 @@ def _instance_transform(obj, local_center, local_size, studs_per_unit):
     matrix = obj.matrix_world
     rows = tuple(tuple(matrix[row][column] for column in range(3)) for row in range(3))
     if matrix.to_3x3().determinant() <= 0:
-        raise ValueError("negative or mirrored transforms are not supported")
+        raise ValueError(tr("Negative or mirrored transforms are not supported"))
     if has_shear(rows):
-        raise ValueError("sheared transforms are not supported")
+        raise ValueError(tr("Sheared transforms are not supported"))
     _location, rotation, scale = matrix.decompose()
     if any(value <= 0 for value in scale):
-        raise ValueError("zero or negative scale is not supported")
+        raise ValueError(tr("Zero or negative scale is not supported"))
     world_center = matrix @ Vector(local_center)
     rotation_rows = tuple(tuple(rotation.to_matrix()[row][column] for column in range(3)) for row in range(3))
     size = convert_size(
@@ -558,7 +697,10 @@ def _instance_transform(obj, local_center, local_size, studs_per_unit):
         studs_per_unit,
     )
     if any(value < 0.001 or value > 2048 for value in size):
-        raise ValueError(f"resulting size {tuple(round(v, 4) for v in size)} is outside 0.001..2048 studs")
+        raise ValueError(trf(
+            "Resulting size {size} is outside 0.001..2048 studs",
+            size=tuple(round(v, 4) for v in size),
+        ))
     position = convert_position(world_center, studs_per_unit)
     converted_rotation = convert_rotation(rotation_rows)
     cframe = [
@@ -569,7 +711,14 @@ def _instance_transform(obj, local_center, local_size, studs_per_unit):
 
 
 def build_selection_document(context):
-    selected_meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
+    collection_parents = _collection_parent_map(context.scene)
+    selected_empties = _top_level_selected_empties(context)
+    for empty in selected_empties:
+        _backfill_empty_document_scope(context.scene, empty, collection_parents)
+    selected_meshes = {obj for obj in context.selected_objects if obj.type == "MESH"}
+    for empty in selected_empties:
+        selected_meshes.update(_descendant_export_meshes(empty))
+    selected_meshes = list(selected_meshes)
     primitive_objects = [
         obj for obj in selected_meshes
         if obj.rbx_primitive_sync.is_roblox_part and obj.rbx_primitive_sync.sync_enabled
@@ -580,7 +729,7 @@ def build_selection_document(context):
     ]
     selected = primitive_objects + mesh_objects
     if not selected:
-        raise ValueError("Select at least one enabled Roblox Part or MeshPart object")
+        raise ValueError(tr("Select at least one enabled Roblox Part or MeshPart object"))
     seen_object_ids = set()
     for obj in sorted(selected, key=lambda item: item.as_pointer()):
         object_id = _ensure_object_guid(obj)
@@ -599,9 +748,9 @@ def build_selection_document(context):
 
     for obj in sorted(mesh_objects, key=lambda item: (item.name.casefold(), item.as_pointer())):
         if obj.data.shape_keys is not None:
-            raise ValueError(f"{obj.name}: Shape Keys are not supported")
+            raise ValueError(trf("{name}: Shape Keys are not supported", name=obj.name))
         if any(modifier.type == "ARMATURE" and modifier.show_viewport for modifier in obj.modifiers):
-            raise ValueError(f"{obj.name}: Armature modifiers are not supported")
+            raise ValueError(trf("{name}: Armature modifiers are not supported", name=obj.name))
         try:
             evaluation_key = _shareable_evaluation_key(obj)
             mesh_result = evaluated_mesh_cache.get(evaluation_key) if evaluation_key is not None else None
@@ -659,7 +808,6 @@ def build_selection_document(context):
             mesh_records[-1]["sourceUri"] = source_uri
         mesh_blobs[digest] = raw
 
-    collection_parents = _collection_parent_map(context.scene)
     document_scope = _selection_document_root(context.scene, selected, collection_parents)
     document_root = document_scope.get("collection") if document_scope else None
     hierarchy, collection_ids, empty_ids = _collect_hierarchy(
@@ -667,6 +815,7 @@ def build_selection_document(context):
         selected,
         parents=collection_parents,
         document_root=document_root,
+        scope_empties=_scope_empties(selected_empties),
     )
     instances = []
     for item in candidates:
@@ -697,6 +846,11 @@ def build_selection_document(context):
             "primaryCollectionId": memberships[0] if memberships else None,
             "collectionIds": memberships,
         }
+        replacement_ids = [
+            value for value in _replacement_object_ids(obj) if value != object_id
+        ]
+        if replacement_ids:
+            instance["replacesObjectIds"] = replacement_ids
         instance["stateHash"] = content_hash({
             key: value for key, value in instance.items() if key != "stateHash"
         })
@@ -762,6 +916,24 @@ def build_selection_document(context):
         "appearances": list(sorted(appearances.values(), key=lambda item: item["hash"])),
         "instances": instances,
     }
+    if selected_empties:
+        hierarchy_ids = {node["id"] for node in hierarchy if node.get("kind") == "MODEL"}
+        replace_scopes = []
+        for empty in selected_empties:
+            hierarchy_id = _ensure_guid(empty, HIERARCHY_GUID_KEY)
+            if hierarchy_id in hierarchy_ids:
+                present_source_ids = sorted(filter(None, (
+                    _valid_uuid(descendant.get(OBJECT_GUID_KEY, ""))
+                    for descendant in empty.children_recursive
+                    if descendant.type == "MESH"
+                )))
+                replace_scopes.append({
+                    "hierarchyId": hierarchy_id,
+                    "mode": "REPLACE_DESCENDANTS",
+                    "presentSourceObjectIds": present_source_ids,
+                })
+        if replace_scopes:
+            document["replaceScopes"] = replace_scopes
     validate_document_limits(document)
     return document, mesh_blobs, image_blobs
 
@@ -789,7 +961,7 @@ class RBX_OT_MeshSyncStart(Operator):
         try:
             settings = ensure_server(context.scene)
         except OSError as error:
-            self.report({"ERROR"}, f"ローカルサーバーを開始できません: {error}")
+            self.report({"ERROR"}, trf("Local server could not be started: {error}", error=error))
             return {"CANCELLED"}
         self.report({"INFO"}, f"Mesh Sync server: 127.0.0.1:{settings.mesh_sync_port}")
         return {"FINISHED"}
@@ -802,7 +974,7 @@ class RBX_OT_MeshSyncStop(Operator):
 
     def execute(self, _context):
         SERVER.stop()
-        self.report({"INFO"}, "Mesh Sync server stopped")
+        self.report({"INFO"}, tr("Mesh Sync server stopped"))
         return {"FINISHED"}
 
 
@@ -813,7 +985,7 @@ class RBX_OT_MeshSyncCopyConnection(Operator):
     def execute(self, context):
         settings = ensure_server(context.scene)
         context.window_manager.clipboard = f"{settings.mesh_sync_port}|{settings.mesh_sync_token}"
-        self.report({"INFO"}, "Studio接続コードをコピーしました")
+        self.report({"INFO"}, tr("Studio connection code copied"))
         return {"FINISHED"}
 
 
@@ -828,11 +1000,14 @@ class RBX_OT_MeshSyncAllowPairing(Operator):
             settings = ensure_server(context.scene)
             SERVER.enable_pairing(60)
         except OSError as error:
-            self.report({"ERROR"}, f"ローカルサーバーを開始できません: {error}")
+            self.report({"ERROR"}, trf("Local server could not be started: {error}", error=error))
             return {"CANCELLED"}
         self.report(
             {"INFO"},
-            f"Studio接続を60秒間許可しました: 127.0.0.1:{settings.mesh_sync_port}",
+            trf(
+                "Studio connection allowed for 60 seconds: 127.0.0.1:{port}",
+                port=settings.mesh_sync_port,
+            ),
         )
         return {"FINISHED"}
 
@@ -845,7 +1020,12 @@ class RBX_OT_MeshSyncSendSelected(Operator):
 
     @classmethod
     def poll(cls, context):
-        return any(obj.type == "MESH" for obj in context.selected_objects)
+        if any(_enabled_export_mesh(obj) for obj in context.selected_objects):
+            return True
+        return any(
+            _descendant_export_meshes(obj)
+            for obj in context.selected_objects if obj.type == "EMPTY"
+        )
 
     def execute(self, context):
         try:
@@ -853,12 +1033,17 @@ class RBX_OT_MeshSyncSendSelected(Operator):
             document, mesh_blobs, image_blobs = build_selection_document(context)
             revision = SERVER.publish(document, mesh_blobs, image_blobs)
         except (ValueError, OSError, RuntimeError) as error:
-            self.report({"ERROR"}, str(error))
+            self.report({"ERROR"}, tr(str(error)))
             return {"CANCELLED"}
         self.report(
             {"INFO"},
-            f"Revision {revision}: {len(document['instances'])} Parts and MeshParts / "
-            f"{len(document['meshes'])} meshes / {len(document['images'])} images",
+            trf(
+                "Revision {revision}: {instances} Parts and MeshParts / {meshes} meshes / {images} images",
+                revision=revision,
+                instances=len(document["instances"]),
+                meshes=len(document["meshes"]),
+                images=len(document["images"]),
+            ),
         )
         return {"FINISHED"}
 
@@ -889,7 +1074,150 @@ class RBX_OT_MeshSyncApplySettings(Operator):
             for field in fields:
                 setattr(target, field, getattr(source, field))
             count += 1
-        self.report({"INFO"}, f"{count}個へMesh Sync設定を適用しました")
+        self.report({"INFO"}, trf("Applied Mesh Sync settings to {count} objects", count=count))
+        return {"FINISHED"}
+
+
+class RBX_OT_MeshSyncSelectSameAppearance(Operator):
+    bl_idname = "rbx_mesh_sync.select_same_appearance"
+    bl_label = "Select Same Appearance"
+    bl_description = "Select objects whose final Studio appearance matches the active object"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(
+            context.mode == "OBJECT"
+            and context.active_object
+            and context.active_object.type == "MESH"
+        )
+
+    def execute(self, context):
+        active = context.active_object
+        scene_settings = context.scene.rbx_primitive_sync
+        active_settings = active.rbx_primitive_sync
+        if scene_settings.mesh_appearance_exclude_parts and active_settings.is_roblox_part:
+            self.report({"ERROR"}, tr("Exclude Roblox Parts is enabled. Make a MeshPart active."))
+            return {"CANCELLED"}
+        if scene_settings.mesh_appearance_selection_scope == "CURRENT_SELECTION":
+            candidates = list(context.selected_objects)
+        else:
+            candidates = [obj for obj in context.scene.objects if obj.parent == active.parent]
+        depsgraph = context.evaluated_depsgraph_get()
+        try:
+            target_hash = _export_appearance_hash(active, depsgraph)
+        except ValueError as error:
+            self.report({"ERROR"}, f"{active.name}: {error}")
+            return {"CANCELLED"}
+        matching = []
+        skipped = []
+        for obj in candidates:
+            if obj.type != "MESH" or not hasattr(obj, "rbx_primitive_sync"):
+                continue
+            settings = obj.rbx_primitive_sync
+            if settings.is_roblox_part:
+                if scene_settings.mesh_appearance_exclude_parts or not settings.sync_enabled:
+                    continue
+            elif not settings.mesh_sync_enabled:
+                continue
+            try:
+                if _export_appearance_hash(obj, depsgraph) == target_hash:
+                    matching.append(obj)
+            except ValueError as error:
+                skipped.append(f"{obj.name}: {error}")
+        for obj in context.view_layer.objects:
+            if obj.select_get():
+                obj.select_set(False)
+        for obj in matching:
+            try:
+                obj.select_set(True)
+            except RuntimeError:
+                pass
+        if active in matching:
+            context.view_layer.objects.active = active
+        if skipped:
+            self.report({"WARNING"}, trf(
+                "Skipped {count} objects because their appearance could not be evaluated: {first}",
+                count=len(skipped), first=skipped[0],
+            ))
+        self.report({"INFO"}, trf(
+            "Selected {count} objects with the same appearance", count=len(matching),
+        ))
+        return {"FINISHED"}
+
+
+class RBX_OT_MeshSyncMergeToActiveAppearance(Operator):
+    bl_idname = "rbx_mesh_sync.merge_to_active_appearance"
+    bl_label = "Merge Selected to Active Appearance"
+    bl_description = (
+        "Join selected MeshParts using Blender Ctrl+J behavior, then use the active object's appearance. "
+        "Non-active modifiers may be lost"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        active = context.active_object
+        return bool(
+            context.mode == "OBJECT"
+            and active
+            and active.type == "MESH"
+            and not active.rbx_primitive_sync.is_roblox_part
+            and len([obj for obj in context.selected_objects if obj.type == "MESH"]) > 1
+        )
+
+    def execute(self, context):
+        active = context.active_object
+        selected_meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
+        parts = [obj.name for obj in selected_meshes if obj.rbx_primitive_sync.is_roblox_part]
+        if parts:
+            self.report({"ERROR"}, trf(
+                "Roblox Parts cannot be merged: {names}", names=", ".join(parts[:3]),
+            ))
+            return {"CANCELLED"}
+        active_id = _ensure_object_guid(active)
+        replacement_ids = set(_replacement_object_ids(active))
+        for obj in selected_meshes:
+            if obj == active:
+                continue
+            replacement_ids.add(_ensure_object_guid(obj))
+            replacement_ids.update(_replacement_object_ids(obj))
+        replacement_ids.discard(active_id)
+
+        use_roblox_material = bool(active.rbx_primitive_sync.mesh_use_roblox_material)
+        active_material = None
+        if not use_roblox_material:
+            materials = _used_materials(active)
+            if len(materials) > 1:
+                self.report({"ERROR"}, tr("The active MeshPart uses multiple export materials"))
+                return {"CANCELLED"}
+            active_material = materials[0] if materials else None
+        for obj in selected_meshes:
+            restore_object_preview(obj)
+        for obj in context.selected_objects:
+            if obj.type != "MESH":
+                obj.select_set(False)
+        active.select_set(True)
+        context.view_layer.objects.active = active
+        result = bpy.ops.object.join()
+        if "FINISHED" not in result:
+            self.report({"ERROR"}, tr("Blender Join failed"))
+            return {"CANCELLED"}
+
+        active.data.materials.clear()
+        if not use_roblox_material and active_material is not None:
+            active.data.materials.append(active_material)
+        for polygon in active.data.polygons:
+            polygon.material_index = 0
+        active[REPLACES_OBJECT_IDS_KEY] = json.dumps(sorted(replacement_ids))
+        refresh_object_preview(active)
+        self.report(
+            {"INFO"},
+            trf(
+                "Merged {count} MeshParts. {replacements} old sync IDs will be replaced on the next send",
+                count=len(selected_meshes), replacements=len(replacement_ids),
+            ),
+        )
         return {"FINISHED"}
 
 
@@ -922,7 +1250,10 @@ class RBX_OT_MeshSyncLinkMeshData(Operator):
             obj.data = source.data
         self.report(
             {"INFO"},
-            f"{len(targets)}個をアクティブMesh「{source.name}」のデータへリンクしました",
+            trf(
+                "Linked {count} objects to the active Mesh data ‘{name}’",
+                count=len(targets), name=source.name,
+            ),
         )
         return {"FINISHED"}
 
@@ -934,5 +1265,7 @@ CLASSES = (
     RBX_OT_MeshSyncAllowPairing,
     RBX_OT_MeshSyncSendSelected,
     RBX_OT_MeshSyncApplySettings,
+    RBX_OT_MeshSyncSelectSameAppearance,
+    RBX_OT_MeshSyncMergeToActiveAppearance,
     RBX_OT_MeshSyncLinkMeshData,
 )

@@ -17,6 +17,7 @@ from .mesh_sync_core import (
     LEGACY_MESH_SCHEMA_ID,
     ORIGINAL_MESH_SCHEMA_ID,
     MESH_SYNC_VERSION,
+    csg_document_summary,
     chunk_bytes,
     sha256_bytes,
     stable_json_bytes,
@@ -262,6 +263,7 @@ class MeshSyncServer:
                         if path == "/v2/reverse/commit":
                             value = self._read_json(1024 * 1024)
                             transfer_id = value.get("transferId")
+                            csg_summary = None
                             with controller._lock:
                                 transfer = controller._reverse_transfer
                                 if not transfer and controller._last_reverse_commit:
@@ -287,6 +289,16 @@ class MeshSyncServer:
                                 controller._reverse_transfer = None
                                 revision = controller._reverse_revision
                                 controller._last_reverse_commit = (transfer_id, revision)
+                                if transfer.document.get("csg"):
+                                    csg_summary = csg_document_summary(transfer.document)
+                            if csg_summary:
+                                print(
+                                    "[Blender Mesh Sync] Received CSG preview "
+                                    f"revision {revision}: {csg_summary['roots']} root(s), "
+                                    f"{csg_summary['nodes']} node(s), {csg_summary['objects']} leaf object(s), "
+                                    f"{csg_summary['positiveOperands']} positive / "
+                                    f"{csg_summary['negativeOperands']} negative operand(s)."
+                                )
                             self._json(200, {"ok": True, "revision": revision})
                             return
                     except (ValueError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as error:
