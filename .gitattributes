@@ -1,0 +1,11 @@
+# Repository text files use LF in both the index and the working tree.
+* text=auto eol=lf
+
+# Studio's OBJ/MTL export writes CRLF. Keep the bundled material definitions
+# on LF so re-exports do not produce whitespace-only diffs.
+*.mtl text eol=lf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.rbxm binary
+*.zip binary
