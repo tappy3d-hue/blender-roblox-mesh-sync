@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import uuid
 
 import bpy
 from mathutils import Euler, Matrix, Vector
@@ -600,6 +601,12 @@ bpy.context.scene.collection.objects.link(replacement_chain)
 replacement_chain.parent = csg_parent
 replacement_chain.rbx_primitive_sync.is_roblox_part = False
 replacement_chain.rbx_primitive_sync.mesh_sync_enabled = True
+# A Mesh moved or duplicated from another imported document may still carry its
+# former document ID. The selected parent Empty is the complete-sync boundary
+# and must adopt that descendant into its own synchronization root.
+replacement_chain[mesh_sync.DOCUMENT_MODEL_GUID_KEY] = "40000000-0000-4000-8000-000000000098"
+replacement_chain[mesh_sync.DOCUMENT_MODEL_NAME_KEY] = "Former Root"
+replacement_chain[mesh_sync.DOCUMENT_ROOT_KIND_KEY] = "STUDIO_SELECTION"
 disabled_existing = replacement_chain.copy()
 disabled_existing.data = replacement_chain.data.copy()
 disabled_existing.name = "Disabled Existing Chain"
@@ -621,6 +628,7 @@ assert replacement_chain.get(mesh_sync.OBJECT_GUID_KEY) in complete_ids
 assert csg_result.get(mesh_sync.OBJECT_GUID_KEY) in complete_ids
 assert disabled_existing.get(mesh_sync.OBJECT_GUID_KEY) not in complete_ids
 assert complete_document["model"]["id"] == complete_model_id
+assert replacement_chain.get(mesh_sync.DOCUMENT_MODEL_GUID_KEY) == complete_model_id
 assert complete_document["replaceScopes"] == [{
     "hierarchyId": complete_hierarchy_id,
     "mode": "REPLACE_DESCENDANTS",
@@ -635,6 +643,43 @@ assert any(
     for node in complete_document["hierarchy"]
 )
 print("EMPTY_COMPLETE_SYNC_SCOPE_OK")
+
+# Duplicating a synchronized Empty copies its hierarchy custom property.
+# Sending both copies must repair the duplicate instead of producing duplicate
+# replace scopes that Studio correctly rejects.
+duplicate_scope_id = "40000000-0000-4000-8000-000000000013"
+duplicate_empties = []
+for index in range(2):
+    duplicate_empty = bpy.data.objects.new(f"Duplicated Scope {index + 1}", None)
+    bpy.context.scene.collection.objects.link(duplicate_empty)
+    duplicate_empty[mesh_sync.HIERARCHY_GUID_KEY] = duplicate_scope_id
+    duplicate_empty[mesh_sync.DOCUMENT_MODEL_GUID_KEY] = complete_model_id
+    duplicate_empty[mesh_sync.DOCUMENT_MODEL_NAME_KEY] = "Nested Union"
+    duplicate_empty[mesh_sync.DOCUMENT_ROOT_KIND_KEY] = "STUDIO_SELECTION"
+    duplicate_mesh = replacement_chain.copy()
+    duplicate_mesh.data = replacement_chain.data.copy()
+    duplicate_mesh.name = f"Duplicated Scope Mesh {index + 1}"
+    duplicate_mesh[mesh_sync.OBJECT_GUID_KEY] = str(uuid.uuid4())
+    bpy.context.scene.collection.objects.link(duplicate_mesh)
+    duplicate_mesh.parent = duplicate_empty
+    duplicate_empties.append(duplicate_empty)
+bpy.ops.object.select_all(action="DESELECT")
+for duplicate_empty in duplicate_empties:
+    duplicate_empty.select_set(True)
+bpy.context.view_layer.objects.active = duplicate_empties[0]
+duplicate_document, _duplicate_meshes, _duplicate_images = mesh_sync.build_selection_document(
+    bpy.context,
+)
+repaired_scope_ids = [
+    duplicate_empty.get(mesh_sync.HIERARCHY_GUID_KEY)
+    for duplicate_empty in duplicate_empties
+]
+assert len(set(repaired_scope_ids)) == 2
+assert {scope["hierarchyId"] for scope in duplicate_document["replaceScopes"]} == set(
+    repaired_scope_ids,
+)
+assert len(duplicate_document["replaceScopes"]) == 2
+print("DUPLICATE_REPLACE_SCOPE_REPAIR_OK")
 
 # Old files did not store document metadata on imported Empties. An
 # unambiguous synchronized descendant migrates the Empty, allowing a new child

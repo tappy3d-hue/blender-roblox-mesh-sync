@@ -785,23 +785,58 @@ function MeshSync.start(plugin)
 			end
 			return found
 		end
+		local function virtualDocumentMetadata(instance: Instance): (any, any, any)
+			local current: Instance? = instance
+			while current and current ~= workspace do
+				local modelId = current:GetAttribute("BlenderDocumentModelId")
+				if type(modelId) == "string" and modelId ~= "" then
+					return modelId, current:GetAttribute("BlenderDocumentModelName"),
+						current:GetAttribute("BlenderDocumentRootKind")
+				end
+				current = current.Parent
+			end
+			return nil, nil, nil
+		end
 		local generatedRoot = nil
+		local documentModelId = nil
+		local documentModelName = nil
+		local documentRootKind = nil
 		local hasUnscopedRoot = false
 		for _, root in roots do
 			local candidate = generatedDocumentRoot(root)
+			local virtualModelId, virtualModelName, virtualRootKind = virtualDocumentMetadata(root)
+			local candidateModelId = if candidate then candidate:GetAttribute("BlenderModelId")
+				else virtualModelId
+			local candidateModelName = if candidate then candidate.Name
+				else virtualModelName
+			local candidateRootKind = if candidate then candidate:GetAttribute("BlenderRootKind")
+				else virtualRootKind
 			if candidate then
 				if generatedRoot and generatedRoot ~= candidate then
 					error("Selection spans multiple Blender sync files; send each file separately")
 				end
 				generatedRoot = candidate
+			end
+			if type(candidateModelId) == "string" and candidateModelId ~= "" then
+				if documentModelId and documentModelId ~= candidateModelId then
+					error("Selection spans multiple Blender sync files; send each file separately")
+				end
+				documentModelId = candidateModelId
+				if type(candidateModelName) == "string" and candidateModelName ~= "" then
+					documentModelName = candidateModelName
+				end
+				if type(candidateRootKind) == "string" and candidateRootKind ~= "" then
+					documentRootKind = candidateRootKind
+				end
 			else
 				hasUnscopedRoot = true
 			end
 		end
-		if generatedRoot and hasUnscopedRoot then
+		if documentModelId and hasUnscopedRoot then
 			error("Selection mixes Blender-synced and unrelated objects; send them separately")
 		end
-		local modelRoot = generatedRoot or (if #roots == 1 and roots[1]:IsA("Model") then roots[1] else nil)
+		local modelRoot = generatedRoot or (if not documentModelId and #roots == 1
+			and roots[1]:IsA("Model") then roots[1] else nil)
 		local included, hierarchyInstances, parts = {}, {}, {}
 		local function includeHierarchyOnly(instance: Instance)
 			if included[instance] then return end
@@ -891,9 +926,9 @@ function MeshSync.start(plugin)
 		local meshes, meshBlobs, images, imageBlobs, appearances = {}, {}, {}, {}, {}
 		local skippedObjects, skippedGroups, unreadableMeshSources = {}, {}, {}
 		local propertyOnlyWarnings = {}
-		local documentRootKind = if modelRoot
+		local exportRootKind = if modelRoot
 			then modelRoot:GetAttribute("BlenderRootKind") or "STUDIO_SELECTION"
-			else "STUDIO_SELECTION"
+			else documentRootKind or "STUDIO_SELECTION"
 		local function mergeRecords(target, staged)
 			for key, value in staged do
 				if target[key] == nil then target[key] = value end
@@ -979,7 +1014,7 @@ function MeshSync.start(plugin)
 			local geometryOwner = "STUDIO"
 			if storedOwner == "BLENDER" or storedOwner == "STUDIO" then
 				geometryOwner = storedOwner
-			elseif documentRootKind == "BLENDER_SCENE"
+			elseif exportRootKind == "BLENDER_SCENE"
 				and part:GetAttribute("GeneratedByBlenderSync") == true then
 				geometryOwner = "BLENDER"
 			end
@@ -1095,7 +1130,8 @@ function MeshSync.start(plugin)
 			error("Selection contains no supported readable Parts or MeshParts")
 		end
 
-		local modelId = if modelRoot then ensureGuid(modelRoot, "BlenderModelId") else plugin:GetSetting("RobloxMeshSync.ReverseModelId.v1")
+		local modelId = if modelRoot then ensureGuid(modelRoot, "BlenderModelId")
+			else documentModelId or plugin:GetSetting("RobloxMeshSync.ReverseModelId.v1")
 		if type(modelId) ~= "string" or modelId == "" then
 			modelId = HttpService:GenerateGUID(false)
 			plugin:SetSetting("RobloxMeshSync.ReverseModelId.v1", modelId)
@@ -1110,9 +1146,9 @@ function MeshSync.start(plugin)
 			generator = { name = "Roblox Primitive Sync", version = PLUGIN_VERSION },
 			model = {
 				id = modelId,
-				name = if modelRoot then modelRoot.Name else "Studio Selection",
+				name = if modelRoot then modelRoot.Name else documentModelName or "Studio Selection",
 				rootKind = if modelRoot then modelRoot:GetAttribute("BlenderRootKind") or "STUDIO_SELECTION"
-					else "STUDIO_SELECTION",
+					else documentRootKind or "STUDIO_SELECTION",
 			},
 			transformMask = {
 				position = ui.positionToggle:GetAttribute("ChannelEnabled") ~= false,
@@ -1994,6 +2030,14 @@ function MeshSync.start(plugin)
 		return nil
 	end
 
+	local function isGeneratedDocumentWrapper(instance: Instance?, modelId: string): boolean
+		return instance ~= nil
+			and (instance:IsA("Folder") or instance:IsA("Model"))
+			and instance:GetAttribute("GeneratedByBlenderSync") == true
+			and instance:GetAttribute("BlenderModelId") == modelId
+			and type(instance:GetAttribute("BlenderHierarchyId")) ~= "string"
+	end
+
 	local function createPrimitivePart(partTypeName: string): BasePart
 		if partTypeName == "Wedge" then return Instance.new("WedgePart") end
 		if partTypeName == "CornerWedge" then return Instance.new("CornerWedgePart") end
@@ -2416,6 +2460,9 @@ function MeshSync.start(plugin)
 					part:SetAttribute("BlenderGeometryOwner", "BLENDER")
 					part:SetAttribute("BlenderObjectId", instanceData.id)
 					part:SetAttribute("BlenderSourceObjectId", instanceData.sourceObjectId or instanceData.id)
+					part:SetAttribute("BlenderDocumentModelId", modelData.id)
+					part:SetAttribute("BlenderDocumentModelName", modelData.name)
+					part:SetAttribute("BlenderDocumentRootKind", modelData.rootKind or "STUDIO_SELECTION")
 					part:SetAttribute("BlenderPartType", if kind == "PART" then instanceData.partType else nil)
 					part:SetAttribute("BlenderLogicalPartType", instanceData.logicalPartType)
 					if kind == "MESH" then
@@ -2452,27 +2499,34 @@ function MeshSync.start(plugin)
 				local modelId = expectString(modelData.id, "model.id")
 				local rootKind = modelData.rootKind or "STUDIO_SELECTION"
 				local previousRoot = findTargetContainer(modelId, rootKind)
-				local rootFolder: Instance
-				if previousRoot and previousRoot:IsA("Folder") then
-					rootFolder = previousRoot
-				elseif previousRoot and previousRoot:IsA("Model") and rootKind == "STUDIO_SELECTION" then
+				local rootFolder: Instance = workspace
+				if previousRoot and rootKind == "STUDIO_SELECTION"
+					and not isGeneratedDocumentWrapper(previousRoot, modelId) then
 					-- The selected Studio Model is both the document boundary and the
 					-- visible group. Keep its current parent exactly as-is.
 					rootFolder = previousRoot
-				else
-					rootFolder = Instance.new("Folder")
-					rootFolder.Parent = workspace
-					if previousRoot then
-						for _, child in previousRoot:GetChildren() do child.Parent = rootFolder end
-						removeUndoably(previousRoot)
+				elseif isGeneratedDocumentWrapper(previousRoot, modelId) then
+					-- Older revisions materialized the transport document as a visible
+					-- Studio Selection/BlenderModel Folder. It is not authored hierarchy:
+					-- retain its membership as attributes, unwrap its children, and remove
+					-- only this positively identified generated wrapper.
+					for _, descendant in previousRoot:GetDescendants() do
+						if descendant:IsA("BasePart") or descendant:IsA("Model") or descendant:IsA("Folder") then
+							descendant:SetAttribute("BlenderDocumentModelId", modelId)
+							descendant:SetAttribute("BlenderDocumentModelName", modelData.name)
+							descendant:SetAttribute("BlenderDocumentRootKind", rootKind)
+						end
 					end
+					for _, child in previousRoot:GetChildren() do child.Parent = workspace end
+					removeUndoably(previousRoot)
 				end
-				rootFolder.Name = expectString(modelData.name, "model.name")
-				rootFolder:SetAttribute("GeneratedByBlenderSync", true)
-				rootFolder:SetAttribute("BlenderModelId", modelId)
-				rootFolder:SetAttribute("BlenderRootKind", rootKind)
-				rootFolder:SetAttribute("BlenderSchema", SCHEMA_ID)
-				rootFolder:SetAttribute("BlenderRevision", revision)
+				if rootFolder ~= workspace then
+					rootFolder:SetAttribute("GeneratedByBlenderSync", true)
+					rootFolder:SetAttribute("BlenderModelId", modelId)
+					rootFolder:SetAttribute("BlenderRootKind", rootKind)
+					rootFolder:SetAttribute("BlenderSchema", SCHEMA_ID)
+					rootFolder:SetAttribute("BlenderRevision", revision)
+				end
 				for variantName, variant in stagedVariants do
 					local existingVariant = MaterialService:FindFirstChild(variantName)
 					if existingVariant then
@@ -2501,6 +2555,13 @@ function MeshSync.start(plugin)
 					end
 				end
 				local hierarchyById = ensureHierarchy(rootFolder, hierarchy, protectedHierarchyIds)
+				for _, hierarchyInstance in hierarchyById do
+					if hierarchyInstance ~= workspace then
+						hierarchyInstance:SetAttribute("BlenderDocumentModelId", modelId)
+						hierarchyInstance:SetAttribute("BlenderDocumentModelName", modelData.name)
+						hierarchyInstance:SetAttribute("BlenderDocumentRootKind", rootKind)
+					end
+				end
 				local existingById = {}
 				local existingParts = {}
 				for _, child in rootFolder:GetDescendants() do
@@ -2632,8 +2693,10 @@ function MeshSync.start(plugin)
 						end
 					end
 				end
-				local legacyGenerated = rootFolder:FindFirstChild("Generated Meshes")
-				if legacyGenerated and #legacyGenerated:GetChildren() == 0 then removeUndoably(legacyGenerated) end
+				if rootFolder ~= workspace then
+					local legacyGenerated = rootFolder:FindFirstChild("Generated Meshes")
+					if legacyGenerated and #legacyGenerated:GetChildren() == 0 then removeUndoably(legacyGenerated) end
+				end
 				-- Select only the Parts/MeshParts created or replaced by this revision.
 				-- Selecting the document root made ordinary move operations act on the
 				-- entire Blender file instead of the objects the user just sent.

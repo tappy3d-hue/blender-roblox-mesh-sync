@@ -77,6 +77,22 @@ def _ensure_guid(owner, key):
     return value
 
 
+def _ensure_unique_owner_guids(owners, key):
+    """Repair IDs copied by Blender duplication within the exported hierarchy."""
+
+    seen = set()
+    for owner in sorted(owners, key=lambda item: item.as_pointer()):
+        value = _valid_uuid(owner.get(key, ""))
+        if not value:
+            continue
+        if value in seen:
+            value = str(uuid.uuid4())
+            while value in seen:
+                value = str(uuid.uuid4())
+            owner[key] = value
+        seen.add(value)
+
+
 def _ensure_object_guid(obj):
     """Use one stable GUID whether the object is sent as a Part or MeshPart."""
 
@@ -527,6 +543,18 @@ def _backfill_empty_document_scope(scene, empty, parents):
         empty[DOCUMENT_ROOT_KIND_KEY] = scope["rootKind"]
 
 
+def _adopt_complete_sync_scope(scene, empty, parents):
+    """Make a selected complete-sync boundary authoritative for its descendants."""
+
+    scope = _object_document_scope(scene, empty, parents)
+    if not scope:
+        return
+    for obj in (empty, *empty.children_recursive):
+        obj[DOCUMENT_MODEL_GUID_KEY] = scope["id"]
+        obj[DOCUMENT_MODEL_NAME_KEY] = scope["name"]
+        obj[DOCUMENT_ROOT_KIND_KEY] = scope["rootKind"]
+
+
 def _selection_document_root(scene, selected, parents):
     scopes = {}
     has_unscoped_object = False
@@ -631,6 +659,12 @@ def _collect_hierarchy(
                 empty_objects.add(current)
             current = current.parent
 
+    # Blender copies custom properties when an Empty or Collection is
+    # duplicated. Repair only owners participating in this document so two
+    # complete-sync boundaries cannot emit the same hierarchy/replace-scope ID.
+    _ensure_unique_owner_guids(included_collections, COLLECTION_GUID_KEY)
+    _ensure_unique_owner_guids(empty_objects, HIERARCHY_GUID_KEY)
+
     collection_ids = {
         collection: _ensure_guid(collection, COLLECTION_GUID_KEY)
         for collection in included_collections
@@ -715,6 +749,7 @@ def build_selection_document(context):
     selected_empties = _top_level_selected_empties(context)
     for empty in selected_empties:
         _backfill_empty_document_scope(context.scene, empty, collection_parents)
+        _adopt_complete_sync_scope(context.scene, empty, collection_parents)
     selected_meshes = {obj for obj in context.selected_objects if obj.type == "MESH"}
     for empty in selected_empties:
         selected_meshes.update(_descendant_export_meshes(empty))

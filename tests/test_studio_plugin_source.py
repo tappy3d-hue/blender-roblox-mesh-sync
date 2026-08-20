@@ -78,6 +78,17 @@ class StudioPluginUndoSourceTests(unittest.TestCase):
         self.assertIn("replacementIds[objectId]", SOURCE)
         self.assertIn("removeUndoably(descendant)", SOURCE)
 
+    def test_transport_roots_are_virtual_and_legacy_wrappers_are_unwrapped(self):
+        self.assertIn("local rootFolder: Instance = workspace", SOURCE)
+        self.assertIn("local function isGeneratedDocumentWrapper", SOURCE)
+        self.assertIn('child.Parent = workspace', SOURCE)
+        self.assertIn('removeUndoably(previousRoot)', SOURCE)
+        self.assertIn('part:SetAttribute("BlenderDocumentModelId", modelData.id)', SOURCE)
+        self.assertIn('hierarchyInstance:SetAttribute("BlenderDocumentModelId", modelId)', SOURCE)
+        self.assertIn("local function virtualDocumentMetadata", SOURCE)
+        self.assertNotIn('rootFolder = Instance.new("Folder")', SOURCE)
+        self.assertNotIn('rootFolder.Name = expectString(modelData.name, "model.name")', SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

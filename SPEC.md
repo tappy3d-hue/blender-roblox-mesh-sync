@@ -203,7 +203,7 @@ Workspace
 - Studioの選択Model／Folderを再帰的に送信し、Partは対応プリミティブ、MeshPartはEditableMeshとしてBlenderへ復元する。
 - Blender由来で同じGUIDの既存MeshPartは、`Preserve Blender Geometry`が有効ならMesh Data、四角面／N-gon、モディファイア、Linked Mesh Data、原点を置換せず、Transform・外観・物理設定だけを更新する。読み取り不能なBlender由来MeshPartもプロパティ更新を許可し、MeshId変更時は形状を保持して警告する。
 - Studio由来MeshPartの復元は`Exact Triangles`、`Join to Quads`、`Dissolve Coplanar`を選択でき、任意の`Merge by Distance`をトポロジー処理前に適用する。推測結合ではUV、法線、色、シャープ境界を保護する。
-- 往復時は選択物の祖先にある同期ルートGUIDと`BLENDER_SCENE`／`STUDIO_SELECTION`種別を再利用し、同期ルート自身を子Hierarchyへ含めない。`Preserve Blender Hierarchy`が有効な既存GUIDでは、全Collection所属、親Empty、Collection／Empty階層をBlender側のまま維持する。異なる同期ルートを混ぜた送信は停止し、`Studio Selection`ルートの再帰的な増殖を防ぐ。
+- 往復時は選択物の祖先または同期属性にある同期ルートGUIDと`BLENDER_SCENE`／`STUDIO_SELECTION`種別を再利用し、同期ルート自身を子Hierarchyへ含めない。技術的な同期ルートはWorkspaceを仮想ルートとして扱い、`Studio Selection`や`BlenderModel`などの受け皿Instanceを生成しない。Blenderで明示したCollection／EmptyだけをFolder／Modelとして実体化する。旧版の同期属性付き受け皿はUndo可能な同一記録内で展開して除去する。`Preserve Blender Hierarchy`が有効な既存GUIDでは、全Collection所属、親Empty、Collection／Empty階層をBlender側のまま維持する。異なる同期ルートを混ぜた送信は停止する。
 - 受信データはBlenderでReview後にApplyまたはDiscardする。ローカル変更済みオブジェクトはGUID単位で競合を表示する。
 - `Use Roblox Material`が有効な場合だけRoblox Material、Color、Transparencyを送信し、Object単位のライブプレビューを生成する。無効時はBlender Material／PBR／頂点カラーを使用し、Linked Mesh Dataを変更しない。
 - 標準Materialプレビューは同梱するStudio OBJ書き出し由来の43種類のMTL・diffuse・normal・specular画像だけで構築する。画像はTexture CoordinateのUVを使ったFlat投影とし、PlasticとSmoothPlasticではNormal Mapを使用しない。ライブラリにない`Air`と`Water`および旧プロシージャル近似は提供しない。
