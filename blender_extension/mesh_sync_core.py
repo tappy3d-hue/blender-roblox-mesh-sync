@@ -16,7 +16,7 @@ REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/4"
 PREVIOUS_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
 LEGACY_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/2"
 ORIGINAL_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/1"
-MESH_SYNC_VERSION = "0.11.0"
+MESH_SYNC_VERSION = "0.11.2"
 DEFAULT_PORT = 27182
 CHUNK_SIZE = 256 * 1024
 MAX_BLOB_SIZE = 32 * 1024 * 1024
@@ -82,6 +82,7 @@ def appearance_signature_payload(appearance: dict):
         "color": appearance.get("color", [1.0, 1.0, 1.0]),
         "transparency": appearance.get("transparency", 0.0),
         "materialVariant": appearance.get("materialVariant"),
+        "textureSource": appearance.get("textureSource"),
         "alphaMode": appearance.get("alphaMode"),
         "emissiveStrength": appearance.get("emissiveStrength", 0.0),
         "emissiveTint": appearance.get("emissiveTint"),
@@ -108,7 +109,7 @@ def resolve_appearance_mode(
     return "TEXTURE" if has_images else ("VERTEX" if has_colors else "NONE")
 
 
-def has_shear(matrix_rows: Sequence[Sequence[float]], tolerance: float = 1e-5) -> bool:
+def has_shear(matrix_rows: Sequence[Sequence[float]], tolerance: float = 1e-4) -> bool:
     """Detect shear from the three columns of a 3x3 transform matrix."""
 
     columns = [tuple(float(matrix_rows[row][column]) for row in range(3)) for column in range(3)]

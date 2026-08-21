@@ -4,12 +4,19 @@ Blenderで作ったプリミティブモデルをRoblox Studioの標準Partと�
 
 Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox MaterialのBlenderプレビューを含みます。設計指針は [SPEC.md](SPEC.md) を参照してください。
 
+### 0.11.2の主な改善
+
+- `Studio Selection`、`Blender Selection`、`BlenderModel`などの受け皿Folderを通常の同期で生成せず、元のModel／Folder階層を維持します。
+- Base Color／EmissiveのsRGB往復、`MeshPart.TextureID`と`SurfaceAppearance`のTintおよび元の表現形式を維持します。
+- 同期済みオブジェクトを`Shift+D`で複製したとき、複製側へ新しい同期GUIDを割り当て、元オブジェクトを誤更新しません。
+- 深い親階層で蓄積した微小な行列誤差をShearとして誤検出しないようにし、実際のShearは引き続き停止します。
+
 ## ダウンロードと簡単インストール
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.11.0.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.11.0.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.11.2.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.11.2.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -42,15 +49,21 @@ Studioプラグインを更新する場合はRojoをPATHへ追加し、`Update S
 - `blender_extension/` — Blenderアドオン
 - `roblox_plugin/` — Roblox Studioプラグイン
 - `examples/` — 共通JSONのサンプル
-- `tests/` — Blenderを起動せず実行できる基礎テスト
+- `tests/` — Blenderなしで実行する単体テスト、Blender実機スモークテスト、診断スクリプト
 
 ## Blenderアドオン
 
-1. `blender_extension`フォルダーをZIPにするか、BlenderのExtension開発用フォルダーへ配置します。
-2. Blenderでアドオンを有効にします。
-3. 3Dビューで `Shift + A > Roblox Parts` を開きます。
-4. 形状を追加し、Nパネルの `Roblox` タブで設定します。
-5. `Validate Scene`で検証してから`Export JSON`を実行します。
+通常利用ではReleaseのBlender用ZIPをそのままインストールしてください。ソースから配布ZIPを作る場合は`Build Release.ps1`を使用し、`blender_extension`フォルダー自体を手作業でZIP化しないでください。
+
+基本操作は次の流れです。
+
+1. 3DビューのNパネルで`Roblox > Roblox Sync`を開き、サーバーが停止中なら`Start`を押します。
+2. 初回だけ`Allow Studio Connection`を押し、Studioプラグインから`Connect`します。
+3. `Shift + A > Roblox Parts`で標準Partを作成するか、既存のMesh／Emptyを選択します。
+4. `Selected Object`で外観と物理設定を調整します。
+5. `Send Selected to Studio`を押します。Part、MeshPart、Union／Intersect由来Meshを同じ送信へ混在できます。
+
+旧形式のプリミティブJSONは`Advanced > Export Legacy JSON`に残していますが、現在の標準ワークフローはローカル接続による`Send Selected to Studio`です。
 
 Object Modeでの移動、回転、拡縮を前提としています。Edit Modeで頂点を変更したオブジェクトは検証エラーになります。
 
@@ -64,7 +77,7 @@ Primitive SyncとMesh Syncの操作は、Nパネルの`Roblox > Roblox Sync`へ�
 
 `Send Selected to Studio`は標準PartとMeshPartを同時に送信できます。`Shift + A > Roblox Parts`で作成したもの、変換済みのプリミティブ、StudioからPartとして受信したものは標準Partとして再構築され、それ以外の有効MeshはMeshPartになります。Tubeは複数のWedgePartへ展開されます。
 
-既定の16分割では64 Partsです。Primitive Syncパネルと選択Tube設定に展開後のPart数を表示し、Tube単体で128 Partsを超える場合と、シーン全体で500 Partsを超える場合は警告します。クリーンな直線Tubeメッシュは`Convert Existing Meshes > Auto Detect`または`Tube`指定で変換できます。Bevel、曲がったパイプ、途中に追加ループがあるMeshは初版の自動判定対象外です。
+既定の16分割では64 Partsです。`Create & Convert`と選択Tube設定に展開後のPart数を表示し、Tube単体で128 Partsを超える場合と、シーン全体で500 Partsを超える場合は警告します。クリーンな直線Tubeメッシュは`Convert Existing Meshes > Auto Detect`または`Tube`指定で変換できます。Bevel、曲がったパイプ、途中に追加ループがあるMeshは初版の自動判定対象外です。
 
 ### 既存メッシュの変換
 
@@ -94,7 +107,7 @@ cd "C:\path\to\plugin-development"
 rojo build .\roblox_plugin\default.project.json --output RobloxPrimitiveSync.rbxm
 ```
 
-プラグインの`Import JSON`からBlenderが出力した`.json`ファイルを選択すると、Workspaceへ標準PartのModelを生成します。
+現在のStudioプラグインはローカル接続による同期を使用します。旧プリミティブJSONの書き出しは互換用で、StudioプラグインのメインUIにはJSONインポート操作を表示しません。
 
 ## Mesh Instancing Sync
 
@@ -124,7 +137,7 @@ StudioのOutputに古いバージョン名と`Mesh Sync schema or revision misma
 1. Blenderで送信する静的Meshを選択します。
    - 形状を常に連動させたい複製は、基準にするオブジェクトを最後に選び、`Link Mesh Data to Active`を押します。これは`Ctrl+L > Link Object Data`と同じ処理で、形状だけでなくUV、頂点カラー、マテリアルも共有します。
 2. `Selected Object`で外観を設定します。
-   - `Auto` — PBR画像、既存頂点カラー、Roblox Materialの順で自動選択
+   - `Auto` — 接続済みPBR画像、既存頂点カラーの順に選び、どちらもなければ外観なし
    - `Texture / PBR` — Base Color、Roughness、Metallic、Normalの接続画像を使用
    - `Vertex Color` — アクティブな既存Color Attributeを使用
    - `Roblox Material` — Roblox標準Materialと単色を使用
@@ -142,7 +155,7 @@ Blenderでの編集そのものは自動送信せず、`Send Selected to Studio`
 
 ### Material Preview
 
-`Selected Mesh Settings > Use Roblox Material`を有効にすると、その下でWoodやBrickなどのRoblox標準MaterialとColorを選択できます。この場合だけ標準MaterialとしてStudioへ送り、Blender Materialのノードや名前から標準Materialを自動判定しません。オフの場合は`Auto`、`Texture / PBR`、`Vertex Color`、`None`からBlender側の外観を選びます。
+`Selected Object > Use Roblox Material`を有効にすると、その下でWoodやBrickなどのRoblox標準MaterialとColorを選択できます。この場合だけ標準MaterialとしてStudioへ送り、Blender Materialのノードや名前から標準Materialを自動判定しません。オフの場合は`Auto`、`Texture / PBR`、`Vertex Color`、`None`からBlender側の外観を選びます。
 
 `Live Material Preview`を有効にすると、Roblox Material、Color、Transparencyの変更がBlender上へ即時反映されます。Roblox標準MaterialはUVではなく、8 studs周期のワールド座標ベースBox投影で近似します。BlenderのTexture / PBRは元のMesh UVを使用します。PlasticとSmoothPlasticは画像テクスチャを使用せず、Roughnessをそれぞれ0.8と0.25に固定します。BlenderのWorldとライトは変更しません。
 
@@ -161,7 +174,7 @@ ColorはBlender内部のシーンリニアRGBとRobloxのsRGBを送受信時に�
 
 PartはBlenderプリミティブへ、Studio由来の新規MeshPartはEditableMeshから静的Meshへ復元されます。Blender由来で同じGUIDを持つ既存MeshPartは、既定の`Preserve Blender Geometry`により元のMesh Data、四角面／N-gon、モディファイア、Linked Mesh Data、原点を維持し、Transform・外観・物理設定だけを更新します。StudioでMeshIdが変更されていた場合も形状を上書きせず警告します。
 
-新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。MeshPartの形状を所有権または共有権限の関係で読み取れない場合は、選択の一部だけを送らず、その送信全体を中止します。
+新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。Base ColorとEmissiveはsRGB画像としてfloatバッファへ保持し、暗部を潰さず往復します。`MeshPart.TextureID`の`Part.Color` Tintと、Base Colorだけの`SurfaceAppearance.Color`も元の表現を保って復元します。MeshPartの形状を所有権または共有権限の関係で読み取れない場合は、選択の一部だけを送らず、その送信全体を中止します。
 
 複数選択またはModel／Folderの再帰送信では、読み取り権限がないMeshPartが1つでもあれば、オブジェクト名と権限理由をStudioのステータスとOutputへ表示し、Blenderに新しいリビジョンを作らず送信全体を中止します。
 
@@ -173,9 +186,9 @@ StudioのCFrameはワールド座標として受信し、BlenderでEmptyを親�
 
 ### 階層
 
-BlenderからStudioへの同期ルート名は保存済み`.blend`のファイル名で、Workspace直下のFolderとして作成されます。Blender Collectionはその中のFolderへ変換され、Collectionに属さないオブジェクトは同期ルート直下へ配置されます。独自の`Scene` Modelは作成しません。Emptyはシーン既定またはEmptyごとの上書きでModel／Folder／Ignoreを選択できます。CollectionやEmptyの意味とGUIDはAttributeへ保持されるため、Studio上の表示クラスとBlender上の階層を分離できます。今回同期したCollectionに対応する旧Modelだけは、子を維持したままFolderへ移行します。
+BlenderからStudioへの技術的な同期ルートは属性だけで管理し、Workspaceへ受け皿Folderを作成しません。Blender CollectionはFolderへ変換され、Collectionに属さないオブジェクトはWorkspace直下へ配置されます。独自の`Scene` Modelも作成しません。Emptyはシーン既定またはEmptyごとの上書きでModel／Folder／Ignoreを選択できます。CollectionやEmptyの意味とGUIDはAttributeへ保持されるため、Studio上の表示クラスとBlender上の階層を分離できます。今回同期したCollectionに対応する旧Modelだけは、子を維持したままFolderへ移行します。
 
-往復同期では、選択物の祖先にある`BlenderModelId`と同期ルート種別を再利用します。`Preserve Blender Hierarchy`が有効な既存オブジェクトでは、全Collection所属、複数Collection所属、親Empty、Collection／Emptyの親子関係をBlender側のまま維持します。新規オブジェクトまたは同設定が無効な場合だけStudioの階層を反映します。同期ルート自体は子Hierarchyとして再送信しないため、`Studio Selection.001`のようなルートが往復ごとに増えることはありません。異なる同期ファイルのオブジェクト、または同期済みEmptyの階層外にある真に未所属のオブジェクトを混ぜた送信は停止します。
+往復同期では、選択物の祖先または同期属性にある`BlenderModelId`と同期ルート種別を再利用します。`Preserve Blender Hierarchy`が有効な既存オブジェクトでは、全Collection所属、複数Collection所属、親Empty、Collection／Emptyの親子関係をBlender側のまま維持します。新規オブジェクトまたは同設定が無効な場合だけStudioの階層を反映します。同期ルートは仮想境界として扱い、`Studio Selection`、`BlenderModel`、`.blend`ファイル名などの受け皿FolderをWorkspaceへ生成しません。Blenderで明示したCollection／Emptyに対応するFolder／Modelだけを作成します。旧版が生成した同期属性付き受け皿は、次回適用時に中身をWorkspaceへ移して安全に取り除きます。異なる同期ファイルのオブジェクト、または同期済みEmptyの階層外にある真に未所属のオブジェクトを混ぜた送信は停止します。
 
 Blenderで同期済みの親Emptyを選んで`Send Selected to Studio`を押すと、その配下にある有効Meshを自動収集し、Robloxの対応Model配下を完全同期します。追加したMeshは同じModelへ入り、Blenderから削除した同期ID付きPart／MeshPart／Union／IntersectはStudioからも削除されます。同期境界のModel、Script、Light、Attachment、未同期Partは維持され、空になった同期済み子Model／Folderだけ安全に削除されます。Emptyを選ばずMeshだけを送った場合は従来どおり部分更新となり、未選択の子は削除しません。新規Meshは同期済み親Emptyから同期元を継承するため、親子として追加した置換Meshを別送する必要はありません。
 
@@ -185,6 +198,8 @@ Mesh Settingsの`Appearance Selection and Merge`では、アクティブオブ�
 
 `Select Same Appearance`の後に任意のMeshPartを追加選択し、`Merge Selected to Active Appearance`を押すと、BlenderのCtrl+J相当でアクティブMeshPartへ統合します。親、原点、同期GUID、物理設定をアクティブ側から維持し、全体のMaterial SlotをアクティブAppearanceへ統一します。Partが混ざっている場合は変更前に停止します。非アクティブ側のModifierはCtrl+Jと同様に失われる可能性があります。統合元GUIDは結果へ記録されるため、統合MeshPartだけをStudioへ送っても旧MeshPart／Unionを同じUndo記録内で削除でき、Ctrl+Z 1回で復元できます。
 
+同期済みPart／MeshPart／Emptyを`Shift+D`で複製した場合は、複製側へ新しい同期GUIDを自動割り当てます。同期元Modelへの所属は維持しますが、統合元を削除する置換履歴は複製側から除去するため、複製物の送信が元オブジェクトの更新や過去のMeshPart削除として扱われることはありません。
+
 Studio由来ドキュメントの同期IDは各Blender Objectへ保存し、受け皿専用の`Studio Selection` Collectionは作成しません。旧方式の同名Collectionが現在の同期対象に対応する場合は、子Collection、Empty、オブジェクトをシーンへ安全に移してから受け皿だけを削除します。
 
 Studioで最初にグループ化したModelをBlenderへ送った場合、そのModelと子Partは同期Folderの外側にあってもGUIDで再発見されます。Studio由来のModel自体を同期境界として再利用し、Modelが別のModel／Folder／Partの下にある場合も現在の親を変更しません。Blenderから送り直す際は既存Model内で子Partを更新するため、Modelが元の階層から外れたり、同じModelが複製されたりしません。
@@ -193,10 +208,14 @@ Blender由来の平坦なオブジェクトをStudio側だけでModel／Folder�
 
 ### 制約
 
-- Blender 4.2以降の静的Meshのみ対応します。Armature、Shape Key、負スケール、ミラー変形、シアーは対象外です。
+- Blender 4.2以降の静的Meshのみ対応します。Armature、Shape Key、負スケール、ミラー変形、実際のシアー変形は対象外です。深い親階層で生じる表示上無視できる行列丸め誤差は許容します。
 - Texture/PBRは1オブジェクトにつき、アトラス化済みの1マテリアルを前提とします。
 - 画像は最大1024×1024、メッシュは最大20,000三角形です。
 - Normal MapはRobloxが要求するOpenGLタンジェント空間形式を使用してください。
-- 選択送信はGUIDが一致するStudio上の生成MeshPartだけを更新し、未選択の生成物と`Studio Only`は削除しません。
+- Mesh／Partだけを選択する部分同期は、GUIDが一致するStudio上のInstanceだけを更新し、未選択物を削除しません。同期済みEmptyを選択する完全同期だけは、その境界内からBlenderで削除された同期GUID付きInstanceをStudioでも取り外します。`Studio Only`や同期GUIDのないStudio専用物は削除しません。
 - 資産はStudioへログイン中のユーザーに作成されます。形状や画像の内容が変わると、新しいAsset IDを作成します。
 - Mesh／Image Assetの登録とインスタンスのステージングが完了してから、Workspace・MaterialServiceを1つのUndo記録内で更新します。置換前のInstanceは`Destroy()`せずUndo可能な状態でDataModelから取り外すため、Ctrl+Zで元のMeshPart・階層・MaterialVariantを復元できます。更新中に失敗した場合は記録をCancelして変更を巻き戻します。Asset登録そのものはStudioのUndo対象外です。
+
+### `Shear is not supported`の確認
+
+通常の回転した円柱や直方体だけでエラーになる場合は、親階層の非均等スケールと回転が組み合わさっていないか確認してください。0.11.2以降は、均等スケールに近い親階層で蓄積する微小な丸め誤差をShearとして扱いません。原因を数値で確認する場合は、対象をアクティブにしてBlenderのScriptingワークスペースから`tests/inspect_blender_transform.py`を実行すると、親階層とShear判定値がクリップボードへ出力されます。

@@ -19,6 +19,27 @@ from .serialization import serialize_scene
 from .validation import estimated_scene_part_count, validate_scene
 
 
+OBJECT_GUID_KEY = "rbx_mesh_object_guid"
+HIERARCHY_GUID_KEY = "rbx_mesh_hierarchy_guid"
+REPLACES_OBJECT_IDS_KEY = "rbx_mesh_replaces_object_ids"
+
+
+def _valid_uuid(value):
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        return ""
+
+
+def _stable_id(value):
+    """Canonicalize UUIDs while preserving legacy Studio string identifiers."""
+
+    canonical = _valid_uuid(value)
+    if canonical:
+        return canonical
+    return str(value) if isinstance(value, str) and value else ""
+
+
 def ensure_scene_guid(scene):
     value = scene.get("rbx_model_guid", "")
     try:
@@ -30,24 +51,41 @@ def ensure_scene_guid(scene):
 
 
 def ensure_unique_guids(scene):
-    """Give newly duplicated tagged objects their own stable identifier."""
+    """Give Shift+D copies new object/hierarchy IDs without losing document scope."""
 
     seen = set()
     changed = 0
     for obj in sorted(scene.objects, key=lambda item: item.as_pointer()):
         settings = obj.rbx_primitive_sync
-        if not settings.is_roblox_part:
+        object_guid = _stable_id(obj.get(OBJECT_GUID_KEY, ""))
+        primitive_guid = _stable_id(settings.guid)
+        if not settings.is_roblox_part and not object_guid:
             continue
-        value = settings.guid
-        try:
-            canonical = str(uuid.UUID(value))
-        except (ValueError, AttributeError, TypeError):
-            canonical = ""
-        if not canonical or canonical in seen:
+        canonical = object_guid or primitive_guid
+        duplicated = bool(canonical and canonical in seen)
+        if not canonical or duplicated:
             canonical = str(uuid.uuid4())
-            settings.guid = canonical
             changed += 1
+        obj[OBJECT_GUID_KEY] = canonical
+        settings.guid = canonical
+        if duplicated:
+            # A duplicate is a new Studio object. It must not replay the source
+            # object's merge history and delete the same replaced MeshParts.
+            obj.pop(REPLACES_OBJECT_IDS_KEY, None)
         seen.add(canonical)
+
+    seen_hierarchy = set()
+    for obj in sorted(scene.objects, key=lambda item: item.as_pointer()):
+        if obj.type != "EMPTY":
+            continue
+        hierarchy_guid = _stable_id(obj.get(HIERARCHY_GUID_KEY, ""))
+        if not hierarchy_guid:
+            continue
+        if hierarchy_guid in seen_hierarchy:
+            hierarchy_guid = str(uuid.uuid4())
+            obj[HIERARCHY_GUID_KEY] = hierarchy_guid
+            changed += 1
+        seen_hierarchy.add(hierarchy_guid)
     ensure_scene_guid(scene)
     return changed
 

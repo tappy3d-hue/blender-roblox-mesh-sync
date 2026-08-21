@@ -30,6 +30,7 @@ LAST_LOCAL_STATE_KEY = "rbx_mesh_last_local_state"
 IMAGE_HASH_KEY = "rbx_mesh_image_hash"
 IMAGE_SOURCE_URI_KEY = "rbx_mesh_source_uri"
 IMAGE_SOURCE_HASH_KEY = "rbx_mesh_source_forward_hash"
+IMAGE_ROLE_KEY = "rbx_mesh_image_role"
 MATERIAL_VARIANT_KEY = "rbx_mesh_material_variant"
 APPEARANCE_METADATA_KEY = "rbx_mesh_appearance_metadata"
 ROOT_KIND_KEY = "rbx_mesh_root_kind"
@@ -95,20 +96,28 @@ def _is_conflict(obj):
 
 def _image_for(record, raw):
     digest = record["hash"]
-    existing = next((image for image in bpy.data.images if image.get(IMAGE_HASH_KEY) == digest), None)
+    role = record.get("role", "image")
+    existing = next((
+        image for image in bpy.data.images
+        if image.get(IMAGE_HASH_KEY) == digest and image.get(IMAGE_ROLE_KEY) == role
+    ), None)
     if existing:
         return existing
     width, height = int(record["width"]), int(record["height"])
     if len(raw) != width * height * 4:
         raise ValueError(f"{record.get('name', digest)} has invalid RGBA data")
     image = bpy.data.images.new(
-        f"RPS {record.get('role', 'Image')} {digest[:10]}", width=width, height=height, alpha=True,
+        f"RPS {record.get('role', 'Image')} {digest[:10]}",
+        width=width, height=height, alpha=True, float_buffer=True,
     )
+    color_map = record.get("role") in {"baseColor", "emissive"}
+    try:
+        image.colorspace_settings.name = "sRGB" if color_map else "Non-Color"
+    except TypeError:
+        pass
     values = [0.0] * len(raw)
     # Roblox EditableImage uses a top-left origin; Blender image pixels start at
     # the bottom-left.  Reversing rows makes a round-trip lossless.
-    color_map = record.get("role") in {"baseColor", "emissive"}
-
     def component(value):
         value = value / 255.0
         if not color_map:
@@ -129,6 +138,7 @@ def _image_for(record, raw):
     image.pixels.foreach_set(values)
     image.update()
     image[IMAGE_HASH_KEY] = digest
+    image[IMAGE_ROLE_KEY] = role
     if record.get("sourceUri"):
         image[IMAGE_SOURCE_URI_KEY] = record["sourceUri"]
         image[IMAGE_SOURCE_HASH_KEY] = sha256_bytes(
@@ -493,7 +503,7 @@ def _apply_settings(obj, record, appearance, image_by_hash):
         obj.pop(MATERIAL_VARIANT_KEY, None)
     metadata = {
         key: appearance[key]
-        for key in ("alphaMode", "emissiveStrength", "emissiveTint")
+        for key in ("textureSource", "alphaMode", "emissiveStrength", "emissiveTint")
         if key in appearance
     }
     if metadata:

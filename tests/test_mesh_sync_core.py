@@ -134,8 +134,19 @@ class MeshSyncCoreTests(unittest.TestCase):
         identity = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
         scaled = ((2, 0, 0), (0, 3, 0), (0, 0, 4))
         sheared = ((1, 0.2, 0), (0, 1, 0), (0, 0, 1))
+        # Real Blender 4.5.9 hierarchy output: tiny scale/rotation round-off
+        # accumulated across four parents. This measured 1.04364e-5 in the
+        # normalized column dot product and is visually indistinguishable from
+        # the intended cylinder, so it must not be treated as authored shear.
+        hierarchy_roundoff = (
+            (-0.269318283, 0.0000394967283, -0.299586058),
+            (0.12846458, -0.313966274, -0.0189702939),
+            (-0.72873646, -0.0553616099, 0.107369907),
+        )
         self.assertFalse(core.has_shear(identity))
         self.assertFalse(core.has_shear(scaled))
+        self.assertFalse(core.has_shear(hierarchy_roundoff))
+        self.assertTrue(core.has_shear(hierarchy_roundoff, tolerance=1e-5))
         self.assertTrue(core.has_shear(sheared))
 
     def test_material_variant_changes_appearance_signature(self):
@@ -147,6 +158,18 @@ class MeshSyncCoreTests(unittest.TestCase):
         self.assertNotEqual(
             core.content_hash(core.appearance_signature_payload(base)),
             core.content_hash(core.appearance_signature_payload(changed)),
+        )
+
+    def test_texture_source_changes_appearance_signature(self):
+        base = {
+            "mode": "TEXTURE", "maps": {"baseColor": "a"},
+            "material": "Plastic", "color": [0.5, 0.75, 1], "transparency": 0,
+        }
+        surface = {**base, "textureSource": "SURFACE_APPEARANCE"}
+        texture_id = {**base, "textureSource": "MESHPART_TEXTURE"}
+        self.assertNotEqual(
+            core.content_hash(core.appearance_signature_payload(surface)),
+            core.content_hash(core.appearance_signature_payload(texture_id)),
         )
 
     def test_roblox_material_is_only_selected_by_explicit_toggle(self):

@@ -78,6 +78,24 @@ class StudioPluginUndoSourceTests(unittest.TestCase):
         self.assertIn("replacementIds[objectId]", SOURCE)
         self.assertIn("removeUndoably(descendant)", SOURCE)
 
+    def test_transport_roots_are_virtual_and_legacy_wrappers_are_unwrapped(self):
+        self.assertIn("local rootFolder: Instance = workspace", SOURCE)
+        self.assertIn("local function isGeneratedDocumentWrapper", SOURCE)
+        self.assertIn('child.Parent = workspace', SOURCE)
+        self.assertIn('removeUndoably(previousRoot)', SOURCE)
+        self.assertIn('part:SetAttribute("BlenderDocumentModelId", modelData.id)', SOURCE)
+        self.assertIn('hierarchyInstance:SetAttribute("BlenderDocumentModelId", modelId)', SOURCE)
+        self.assertIn("local function virtualDocumentMetadata", SOURCE)
+        self.assertNotIn('rootFolder = Instance.new("Folder")', SOURCE)
+        self.assertNotIn('rootFolder.Name = expectString(modelData.name, "model.name")', SOURCE)
+
+    def test_texture_tint_and_surface_source_are_restored(self):
+        self.assertIn('appearance.textureSource = "SURFACE_APPEARANCE"', SOURCE)
+        self.assertIn('appearance.textureSource = "MESHPART_TEXTURE"', SOURCE)
+        self.assertIn('appearance.textureSource = "MATERIAL_VARIANT"', SOURCE)
+        self.assertIn('appearance.textureSource == "SURFACE_APPEARANCE"', SOURCE)
+        self.assertIn('part.Color = colorFromArray(appearance.color, Color3.new(1, 1, 1))', SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()
