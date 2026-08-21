@@ -408,7 +408,9 @@ def _appearance_for(obj, has_uv, has_colors, image_records, image_blobs):
     if mode == "TEXTURE":
         for role, image_info in images.items():
             image, selected_channel = image_info
-            raw, width, height = _image_bytes(image, role == "baseColor", selected_channel)
+            raw, width, height = _image_bytes(
+                image, role in {"baseColor", "emissive"}, selected_channel,
+            )
             digest = sha256_bytes(width.to_bytes(4, "little") + height.to_bytes(4, "little") + raw)
             appearance["maps"][role] = digest
             if digest not in image_records:

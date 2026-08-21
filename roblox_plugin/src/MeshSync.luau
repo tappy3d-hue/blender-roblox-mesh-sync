@@ -12,7 +12,7 @@ local LEGACY_SCHEMA_ID = "roblox-mesh-sync/2"
 local ORIGINAL_SCHEMA_ID = "roblox-mesh-sync/1"
 local REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/3"
 local CSG_REVERSE_SCHEMA_ID = "roblox-mesh-sync-reverse/4"
-local PLUGIN_VERSION = "0.11.0"
+local PLUGIN_VERSION = "0.11.2"
 local MESH_CACHE_KEY = "RobloxMeshSync.MeshCache.v1"
 local IMAGE_CACHE_KEY = "RobloxMeshSync.ImageCache.v1"
 local CONNECTION_KEY = "RobloxMeshSync.Connection.v1"
@@ -621,6 +621,7 @@ function MeshSync.start(plugin)
 		local surface = part:FindFirstChildOfClass("SurfaceAppearance")
 		if surface then
 			appearance.mode = "TEXTURE"
+			appearance.textureSource = "SURFACE_APPEARANCE"
 			appearance.color = { surface.Color.R, surface.Color.G, surface.Color.B }
 			appearance.maps.baseColor = collectImage(contentProperty(surface, "ColorMapContent", "ColorMap"), "baseColor", images, imageBlobs)
 			appearance.maps.roughness = collectImage(contentProperty(surface, "RoughnessMapContent", "RoughnessMap"), "roughness", images, imageBlobs)
@@ -632,6 +633,7 @@ function MeshSync.start(plugin)
 			appearance.alphaMode = surface.AlphaMode.Name
 		elseif part:IsA("MeshPart") and part.TextureID ~= "" then
 			appearance.mode = "TEXTURE"
+			appearance.textureSource = "MESHPART_TEXTURE"
 			appearance.maps.baseColor = collectImage(imageContent(part.TextureID), "baseColor", images, imageBlobs)
 		end
 
@@ -639,6 +641,7 @@ function MeshSync.start(plugin)
 			local variant = MaterialService:FindFirstChild(part.MaterialVariant)
 			if variant and variant:IsA("MaterialVariant") and variant.BaseMaterial == part.Material then
 				appearance.mode = "TEXTURE"
+				appearance.textureSource = "MATERIAL_VARIANT"
 				appearance.materialVariant = {
 					name = variant.Name,
 					baseMaterial = variant.BaseMaterial.Name,
@@ -1977,8 +1980,11 @@ function MeshSync.start(plugin)
 				return
 			end
 			local hasPbr = maps.roughness ~= nil or maps.metallic ~= nil or maps.normal ~= nil
-			if not hasPbr and maps.baseColor then
+			local useSurfaceAppearance = hasPbr or maps.emissive ~= nil
+				or appearance.textureSource == "SURFACE_APPEARANCE"
+			if not useSurfaceAppearance and maps.baseColor then
 				part.TextureID = assetUri(imageAssets[maps.baseColor])
+				part.Color = colorFromArray(appearance.color, Color3.new(1, 1, 1))
 			else
 				local surface = Instance.new("SurfaceAppearance")
 				surface.Name = "BlenderSurfaceAppearance"

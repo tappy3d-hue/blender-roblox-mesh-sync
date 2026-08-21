@@ -89,6 +89,13 @@ class StudioPluginUndoSourceTests(unittest.TestCase):
         self.assertNotIn('rootFolder = Instance.new("Folder")', SOURCE)
         self.assertNotIn('rootFolder.Name = expectString(modelData.name, "model.name")', SOURCE)
 
+    def test_texture_tint_and_surface_source_are_restored(self):
+        self.assertIn('appearance.textureSource = "SURFACE_APPEARANCE"', SOURCE)
+        self.assertIn('appearance.textureSource = "MESHPART_TEXTURE"', SOURCE)
+        self.assertIn('appearance.textureSource = "MATERIAL_VARIANT"', SOURCE)
+        self.assertIn('appearance.textureSource == "SURFACE_APPEARANCE"', SOURCE)
+        self.assertIn('part.Color = colorFromArray(appearance.color, Color3.new(1, 1, 1))', SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -179,7 +179,7 @@ Workspace
 - Blenderは選択Meshだけを`127.0.0.1:27182`からStudioへ送る。
 - 頂点、三角形、分割法線、UV、既存頂点カラーをメッシュ内容の署名とする。位置、回転、正のObject Scaleはインスタンス情報とする。
 - 未変更のメッシュと画像は内容ハッシュから以前のAsset IDを再利用し、変更時は過去のAssetを更新せず新しいIDを作る。
-- Base Colorのみの場合は`MeshPart.TextureContent`、PBRの場合は`SurfaceAppearance`、標準Materialの場合は`BasePart.Material`を使用する。
+- Base Colorのみの場合は`MeshPart.TextureContent`、PBRの場合は`SurfaceAppearance`、標準Materialの場合は`BasePart.Material`を使用する。元が`SurfaceAppearance`の場合はBase Colorだけでも同クラスを維持し、`MeshPart.TextureID`の`Part.Color`および`SurfaceAppearance.Color`のTintを復元する。Base ColorとEmissiveはsRGBとしてfloat画像バッファへ読み込み、送信時にsRGBへ戻す。
 - Base Color、Roughness、Metallic、OpenGLタンジェント空間Normal、既存Color Attributeへ対応する。ベイクやアトラス生成は行わない。
 - 選択オブジェクトはGUIDによって追加・更新し、未選択オブジェクトは削除しない。
 - Armature、Shape Key、負スケール、シアー、1024pxを超える画像、20,000三角形を超えるMeshは検証エラーとする。
@@ -197,6 +197,7 @@ Workspace
 - Blenderで最上位の選択Emptyを完全同期境界とし、有効な子孫Meshと範囲内の全Emptyを自動収集する。`roblox-mesh-sync/4`の任意`replaceScopes`は`hierarchyId`、`mode=REPLACE_DESCENDANTS`、範囲内に現存する`presentSourceObjectIds`を持つ。Studioは対応する既存Model自体を変更せず、受信されずBlenderにも現存しない同期ID付きBasePartだけをUndo記録内で取り外す。保護対象の子がない同期済み子Model／Folderだけを削除する。フィールドがないMesh単体送信は部分更新であり、未受信物を削除しない。
 - Studioから受信したEmptyにはdocumentの同期元ID・名前・ルート種別を保存し、新規の子Meshは最寄りの親Emptyから同期元を継承する。旧ファイルのEmptyは、配下の同期済みMeshが単一の同期元を示す場合だけメタデータを補完する。既存Modelの再利用は同期GUID一致だけで行い、名前一致は使用しない。
 - Blenderの`Select Same Appearance`は既存の送信Appearance hashを比較し、直接の親Objectが同じ範囲または現在選択中の範囲から一致物を選ぶ。`Exclude Roblox Parts`は既定オンとし、オフ時はPartも選択だけ許可する。`Merge Selected to Active Appearance`はPart混在時に停止し、MeshPartだけをCtrl+J相当でアクティブへ統合する。結果はアクティブの親、原点、GUID、物理設定を維持し、Material SlotをアクティブAppearanceへ統一する。
+- 同期済みPart／MeshPart／Emptyの`Shift+D`複製は、同期元ドキュメント属性を維持しつつ複製側のObject／Hierarchy GUIDを自動更新する。複製された`replacesObjectIds`は除去し、元オブジェクトの更新や統合元の再削除を防ぐ。
 - 統合MeshPartのforward instanceは任意の`replacesObjectIds`に消えた統合元GUIDを保持する。Studioは自己参照、同一revision内のinstance参照、重複要求を拒否し、新しいMeshPartの配置後に一致する旧BasePartを同じChangeHistory記録内で取り外す。存在しない置換先の再送信は成功扱いとする。
 - `Send Selected to Studio`は、Roblox Partとして登録済みのBlenderオブジェクトを標準Part、それ以外の有効MeshをMeshPartとして同じリビジョンで送る。位置・回転・スケールは個別に更新を無効化でき、新規作成時は初期Transformを必ず設定する。
 - `.blend`名のFolderを同期ルートにし、CollectionはFolderとして転送する。Collection未所属オブジェクトはルート直下へ配置し、`Scene` Modelや固定の`Generated Meshes`フォルダーは作成しない。Emptyはシーン既定と個別上書きによりModel／Folder／Ignoreを選択でき、元のHierarchy種別とGUIDはAttributeへ保持する。

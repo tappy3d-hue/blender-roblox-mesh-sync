@@ -8,8 +8,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.11.0.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.11.0.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.11.2.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.11.2.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 
@@ -161,7 +161,7 @@ ColorはBlender内部のシーンリニアRGBとRobloxのsRGBを送受信時に�
 
 PartはBlenderプリミティブへ、Studio由来の新規MeshPartはEditableMeshから静的Meshへ復元されます。Blender由来で同じGUIDを持つ既存MeshPartは、既定の`Preserve Blender Geometry`により元のMesh Data、四角面／N-gon、モディファイア、Linked Mesh Data、原点を維持し、Transform・外観・物理設定だけを更新します。StudioでMeshIdが変更されていた場合も形状を上書きせず警告します。
 
-新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。MeshPartの形状を所有権または共有権限の関係で読み取れない場合は、選択の一部だけを送らず、その送信全体を中止します。
+新規または形状置換時の`Mesh Topology`は、正確な`Exact Triangles`、属性境界を保護しながら推測結合する`Join to Quads`、同一平面を推測結合する`Dissolve Coplanar`から選べます。`Merge by Distance`は既定オフです。SurfaceAppearanceとMaterialVariantの取得可能なPBR画像は内容ハッシュで共有され、`.blend`へPackされます。Base ColorとEmissiveはsRGB画像としてfloatバッファへ保持し、暗部を潰さず往復します。`MeshPart.TextureID`の`Part.Color` Tintと、Base Colorだけの`SurfaceAppearance.Color`も元の表現を保って復元します。MeshPartの形状を所有権または共有権限の関係で読み取れない場合は、選択の一部だけを送らず、その送信全体を中止します。
 
 複数選択またはModel／Folderの再帰送信では、読み取り権限がないMeshPartが1つでもあれば、オブジェクト名と権限理由をStudioのステータスとOutputへ表示し、Blenderに新しいリビジョンを作らず送信全体を中止します。
 
@@ -184,6 +184,8 @@ Blenderで同期済みの親Emptyを選んで`Send Selected to Studio`を押す�
 Mesh Settingsの`Appearance Selection and Merge`では、アクティブオブジェクトとStudioへの最終送信Appearanceが同じ対象を選択できます。Scopeは直接の親Objectが同じ`Same Parent`と、現在の選択だけを絞り込む`Current Selection`から選びます。`Exclude Roblox Parts`は既定オンで、オフにすると同じAppearanceのPartも選択しますが、PartをMeshPartへ統合することはありません。
 
 `Select Same Appearance`の後に任意のMeshPartを追加選択し、`Merge Selected to Active Appearance`を押すと、BlenderのCtrl+J相当でアクティブMeshPartへ統合します。親、原点、同期GUID、物理設定をアクティブ側から維持し、全体のMaterial SlotをアクティブAppearanceへ統一します。Partが混ざっている場合は変更前に停止します。非アクティブ側のModifierはCtrl+Jと同様に失われる可能性があります。統合元GUIDは結果へ記録されるため、統合MeshPartだけをStudioへ送っても旧MeshPart／Unionを同じUndo記録内で削除でき、Ctrl+Z 1回で復元できます。
+
+同期済みPart／MeshPart／Emptyを`Shift+D`で複製した場合は、複製側へ新しい同期GUIDを自動割り当てます。同期元Modelへの所属は維持しますが、統合元を削除する置換履歴は複製側から除去するため、複製物の送信が元オブジェクトの更新や過去のMeshPart削除として扱われることはありません。
 
 Studio由来ドキュメントの同期IDは各Blender Objectへ保存し、受け皿専用の`Studio Selection` Collectionは作成しません。旧方式の同名Collectionが現在の同期対象に対応する場合は、子Collection、Empty、オブジェクトをシーンへ安全に移してから受け皿だけを削除します。
 
