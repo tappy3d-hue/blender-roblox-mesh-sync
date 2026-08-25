@@ -475,11 +475,28 @@ def _collection_parent_map(scene):
     return parents
 
 
-def _document_root_for_collection(scene, collection, parents):
+def _document_scope_for_collection(scene, collection, parents):
     current = collection
     while current and current != scene.collection:
+        model_id = _valid_uuid(current.get(DOCUMENT_MODEL_GUID_KEY, ""))
+        if model_id:
+            return {
+                "id": model_id,
+                "name": current.get(DOCUMENT_MODEL_NAME_KEY, "Studio Selection"),
+                "rootKind": current.get(DOCUMENT_ROOT_KIND_KEY, "STUDIO_SELECTION"),
+                # This Collection is authored hierarchy carrying virtual root
+                # metadata, so it must still be emitted as a hierarchy node.
+                "collection": None,
+            }
         if _valid_uuid(current.get("rbx_model_guid", "")):
-            return current
+            return {
+                "id": current.get("rbx_model_guid", ""),
+                "name": current.name,
+                "rootKind": current.get(ROOT_KIND_KEY, "STUDIO_SELECTION"),
+                # Legacy materialized document wrapper; exclude it from the
+                # authored hierarchy until reverse sync migrates it away.
+                "collection": current,
+            }
         current = parents.get(current)
     return None
 
@@ -498,23 +515,17 @@ def _object_document_scope(scene, obj, parents):
                 "collection": None,
             }
         current = current.parent
-    object_roots = {
-        root
+    collection_scopes = {
+        scope["id"]: scope
         for collection in obj.users_collection
-        if (root := _document_root_for_collection(scene, collection, parents)) is not None
+        if (scope := _document_scope_for_collection(scene, collection, parents)) is not None
     }
-    if len(object_roots) > 1:
+    if len(collection_scopes) > 1:
         raise ValueError(trf(
             "{name}: The object belongs to multiple synchronized root Collections", name=obj.name,
         ))
-    if object_roots:
-        root = next(iter(object_roots))
-        return {
-            "id": root.get("rbx_model_guid", ""),
-            "name": root.name,
-            "rootKind": root.get(ROOT_KIND_KEY, "STUDIO_SELECTION"),
-            "collection": root,
-        }
+    if collection_scopes:
+        return next(iter(collection_scopes.values()))
     return None
 
 

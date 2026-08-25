@@ -722,8 +722,8 @@ def _required_hierarchy_ids(document, staged, preserve_existing):
     return required
 
 
-def _migrate_legacy_studio_roots(context):
-    """Remove generated Studio Selection wrappers without losing their contents."""
+def _migrate_legacy_transport_roots(context):
+    """Remove generated document wrappers without losing hierarchy or scope."""
 
     root = context.scene.collection
     legacy_roots = [
@@ -731,14 +731,25 @@ def _migrate_legacy_studio_roots(context):
         if collection != root
         and isinstance(collection.get("rbx_model_guid", ""), str)
         and bool(collection.get("rbx_model_guid", ""))
-        and collection.get(ROOT_KIND_KEY, "STUDIO_SELECTION") == "STUDIO_SELECTION"
+        # Document roots created by older versions have a model GUID but no
+        # hierarchy GUID. Authored Studio Folders use COLLECTION_GUID_KEY and
+        # must remain visible Blender Collections.
+        and not collection.get(COLLECTION_GUID_KEY, "")
     ]
     for legacy in legacy_roots:
         model_id = legacy.get("rbx_model_guid", "")
+        root_kind = legacy.get(ROOT_KIND_KEY, "STUDIO_SELECTION")
         for obj in tuple(legacy.all_objects):
             obj[DOCUMENT_MODEL_GUID_KEY] = model_id
             obj[DOCUMENT_MODEL_NAME_KEY] = legacy.name
-            obj[DOCUMENT_ROOT_KIND_KEY] = "STUDIO_SELECTION"
+            obj[DOCUMENT_ROOT_KIND_KEY] = root_kind
+        pending_collections = list(legacy.children)
+        while pending_collections:
+            child = pending_collections.pop()
+            pending_collections.extend(child.children)
+            child[DOCUMENT_MODEL_GUID_KEY] = model_id
+            child[DOCUMENT_MODEL_NAME_KEY] = legacy.name
+            child[DOCUMENT_ROOT_KIND_KEY] = root_kind
         for child in tuple(legacy.children):
             if child.name not in root.children:
                 root.children.link(child)
@@ -761,25 +772,12 @@ def _ensure_hierarchy(
     model = document.get("model", {})
     model_id = model.get("id", "studio-selection")
     root_kind = model.get("rootKind", "STUDIO_SELECTION")
-    scene_model_id = context.scene.get("rbx_model_guid", "")
-    if root_kind == "STUDIO_SELECTION":
-        root = _migrate_legacy_studio_roots(context)
-    elif root_kind == "BLENDER_SCENE" and scene_model_id == model_id:
-        root = context.scene.collection
-    else:
-        root = next(
-            (value for value in bpy.data.collections if value.get("rbx_model_guid") == model_id),
-            None,
-        )
-        if root is None:
-            if preserve_existing and not required_ids and not needs_root:
-                root = context.scene.collection
-            else:
-                root = bpy.data.collections.new(model.get("name", "Studio Selection"))
-                root["rbx_model_guid"] = model_id
-                root[ROOT_KIND_KEY] = root_kind
-        if root != context.scene.collection and root.name not in context.scene.collection.children:
-            context.scene.collection.children.link(root)
+    # BLENDER_SCENE and STUDIO_SELECTION are transport boundaries, not authored
+    # hierarchy. Always use the Blender scene root and preserve the document
+    # identity as metadata on imported objects/Collections. This also supports
+    # several synchronization documents in one .blend without visible wrapper
+    # Collections such as BlenderModel or Studio Selection.
+    root = _migrate_legacy_transport_roots(context)
 
     ordered = hierarchy_parent_order(document.get("hierarchy", []))
     nodes = {node["id"]: node for node in ordered}
@@ -801,6 +799,9 @@ def _ensure_hierarchy(
         elif not preserve_existing:
             collection.name = node["name"]
             collection[HIERARCHY_PARENT_KEY] = node.get("parentId", "")
+        collection[DOCUMENT_MODEL_GUID_KEY] = model_id
+        collection[DOCUMENT_MODEL_NAME_KEY] = model.get("name", "Studio Selection")
+        collection[DOCUMENT_ROOT_KIND_KEY] = root_kind
         collections[node["id"]] = collection
 
     # Existing Blender Collection edges are authoritative in preserve mode.
@@ -1233,6 +1234,12 @@ def _apply_csg_pending(context, pending):
         for collection in reversed(created_collections):
             if collection.name in bpy.data.collections and not collection.objects and not collection.children:
                 bpy.data.collections.remove(collection)
+        if (
+            master_operands.name in bpy.data.collections
+            and not master_operands.objects
+            and not master_operands.children
+        ):
+            bpy.data.collections.remove(master_operands)
         for mesh in set(mesh_data_cache.values()):
             if mesh.users == 0:
                 bpy.data.meshes.remove(mesh)

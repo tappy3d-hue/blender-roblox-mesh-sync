@@ -255,6 +255,70 @@ assert bpy.data.collections.get("Should Not Become Collection") is None
 assert preserved.name == "Forward Part Updated"
 print("PRESERVE_BLENDER_HIERARCHY_OK")
 
+# A BLENDER_SCENE document can return to a new .blend or a Scene whose local
+# model GUID differs. The document boundary is still virtual: do not create a
+# visible BlenderModel/Studio Selection wrapper. Authored Folder nodes remain
+# real Collections and carry scope metadata so newly added children inherit the
+# same synchronization document.
+mismatched_model_id = "40000000-0000-4000-8000-000000000020"
+mismatched_folder_id = "40000000-0000-4000-8000-000000000021"
+mismatched_object_id = "40000000-0000-4000-8000-000000000022"
+legacy_wrapper = bpy.data.collections.new("BlenderModel")
+legacy_wrapper["rbx_model_guid"] = mismatched_model_id
+legacy_wrapper[reverse_sync.ROOT_KIND_KEY] = "BLENDER_SCENE"
+bpy.context.scene.collection.children.link(legacy_wrapper)
+legacy_mesh = forward_part.copy()
+legacy_mesh.data = forward_part.data.copy()
+legacy_mesh.name = "Legacy Wrapper Child"
+legacy_wrapper.objects.link(legacy_mesh)
+mismatched_document = {
+    "schema": "roblox-mesh-sync-reverse/3",
+    "model": {"id": mismatched_model_id, "name": "BlenderModel", "rootKind": "BLENDER_SCENE"},
+    "transformMask": {"position": True, "rotation": True, "scale": True},
+    "hierarchy": [{
+        "id": mismatched_folder_id, "name": "Authored Folder", "kind": "FOLDER", "parentId": None,
+    }],
+    "meshes": [], "images": [], "appearances": auto_document["appearances"],
+    "objects": [{
+        "id": mismatched_object_id, "name": "Mismatched Scene Part", "kind": "PART", "partType": "Block",
+        "appearanceHash": "wood", "size": [2, 2, 2],
+        "cframe": [140, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "primaryCollectionId": mismatched_folder_id,
+        "collectionIds": [mismatched_folder_id],
+    }],
+}
+bpy.context.scene.rbx_primitive_sync.reverse_preserve_hierarchy = False
+reverse_sync.SERVER._pending_reverse = ReverseSnapshot(3, mismatched_document, {})
+reverse_sync.auto_apply_pending_timer()
+assert bpy.data.collections.get("BlenderModel") is None
+assert bpy.context.scene.collection in legacy_mesh.users_collection
+assert legacy_mesh.get(reverse_sync.DOCUMENT_MODEL_GUID_KEY) == mismatched_model_id
+authored_folder = next(
+    collection for collection in bpy.data.collections
+    if collection.get(reverse_sync.COLLECTION_GUID_KEY) == mismatched_folder_id
+)
+assert authored_folder.get(reverse_sync.DOCUMENT_MODEL_GUID_KEY) == mismatched_model_id
+new_folder_child = forward_part.copy()
+new_folder_child.data = forward_part.data.copy()
+new_folder_child.name = "New Authored Folder Child"
+new_folder_child.parent = None
+for key in (
+    reverse_sync.DOCUMENT_MODEL_GUID_KEY,
+    reverse_sync.DOCUMENT_MODEL_NAME_KEY,
+    reverse_sync.DOCUMENT_ROOT_KIND_KEY,
+):
+    new_folder_child.pop(key, None)
+authored_folder.objects.link(new_folder_child)
+bpy.ops.object.select_all(action="DESELECT")
+new_folder_child.select_set(True)
+bpy.context.view_layer.objects.active = new_folder_child
+inherited_document, _mesh_blobs, _image_blobs = mesh_sync.build_selection_document(bpy.context)
+assert inherited_document["model"] == {
+    "id": mismatched_model_id, "name": "BlenderModel", "rootKind": "BLENDER_SCENE",
+}, inherited_document["model"]
+assert {node["id"] for node in inherited_document["hierarchy"]} == {mismatched_folder_id}, inherited_document["hierarchy"]
+print("MISMATCHED_SCENE_ROOT_REMAINS_VIRTUAL_OK")
+
 # Disabling Preserve Blender Hierarchy deliberately applies the incoming Studio
 # Folder/Model hierarchy instead of keeping the existing Blender memberships.
 studio_folder_id = "studio-folder-for-reparent"
@@ -283,7 +347,7 @@ reparent_document = {
     }],
 }
 bpy.context.scene.rbx_primitive_sync.reverse_preserve_hierarchy = False
-reverse_sync.SERVER._pending_reverse = ReverseSnapshot(3, reparent_document, {})
+reverse_sync.SERVER._pending_reverse = ReverseSnapshot(4, reparent_document, {})
 reverse_sync.auto_apply_pending_timer()
 reparented = next(obj for obj in bpy.data.objects if obj.get(reverse_sync.OBJECT_GUID_KEY) == forward_id)
 studio_folder = next(
@@ -770,10 +834,15 @@ bpy.ops.object.duplicate()
 bpy.context.view_layer.update()
 operator_duplicate = bpy.context.view_layer.objects.active
 assert operator_duplicate is not operator_source
-assert operator_duplicate.get(mesh_sync.OBJECT_GUID_KEY) != operator_source.get(
-    mesh_sync.OBJECT_GUID_KEY,
+operator_pair = (operator_source, operator_duplicate)
+assert len({obj.get(mesh_sync.OBJECT_GUID_KEY) for obj in operator_pair}) == 2
+retained_operator = next(
+    obj for obj in operator_pair
+    if obj.get(mesh_sync.OBJECT_GUID_KEY) == "40000000-0000-4000-8000-000000000017"
 )
-assert mesh_sync.REPLACES_OBJECT_IDS_KEY not in operator_duplicate
+new_operator = next(obj for obj in operator_pair if obj is not retained_operator)
+assert json.loads(retained_operator.get(mesh_sync.REPLACES_OBJECT_IDS_KEY)) == [shift_replacement_id]
+assert mesh_sync.REPLACES_OBJECT_IDS_KEY not in new_operator
 print("SHIFT_D_DUPLICATE_IDS_OK")
 
 # Old files did not store document metadata on imported Empties. An

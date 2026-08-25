@@ -5,6 +5,9 @@ import unittest
 SOURCE = (
     Path(__file__).resolve().parents[1] / "roblox_plugin" / "src" / "MeshSync.luau"
 ).read_text(encoding="utf-8")
+LEGACY_SOURCE = (
+    Path(__file__).resolve().parents[1] / "roblox_plugin" / "src" / "init.server.luau"
+).read_text(encoding="utf-8")
 
 
 class StudioPluginUndoSourceTests(unittest.TestCase):
@@ -88,6 +91,12 @@ class StudioPluginUndoSourceTests(unittest.TestCase):
         self.assertIn("local function virtualDocumentMetadata", SOURCE)
         self.assertNotIn('rootFolder = Instance.new("Folder")', SOURCE)
         self.assertNotIn('rootFolder.Name = expectString(modelData.name, "model.name")', SOURCE)
+
+    def test_legacy_json_import_has_no_generated_folder_wrappers(self):
+        self.assertIn("model.Name = document.modelName", LEGACY_SOURCE)
+        self.assertNotIn('generatedFolder.Name = "Generated Parts"', LEGACY_SOURCE)
+        self.assertNotIn('studioOnlyFolder.Name = "Studio Only"', LEGACY_SOURCE)
+        self.assertIn("local parent: Instance = model", LEGACY_SOURCE)
 
     def test_texture_tint_and_surface_source_are_restored(self):
         self.assertIn('appearance.textureSource = "SURFACE_APPEARANCE"', SOURCE)

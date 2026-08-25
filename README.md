@@ -4,9 +4,11 @@ Blenderで作ったプリミティブモデルをRoblox Studioの標準Partと�
 
 Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox MaterialのBlenderプレビューを含みます。設計指針は [SPEC.md](SPEC.md) を参照してください。
 
-### 0.11.2の主な改善
+### 0.11.3の主な改善
 
-- `Studio Selection`、`Blender Selection`、`BlenderModel`などの受け皿Folderを通常の同期で生成せず、元のModel／Folder階層を維持します。
+- `BLENDER_SCENE`の同期IDが異なる場合も、`Studio Selection`、`Blender Selection`、`BlenderModel`などの受け皿Collectionを生成せず、元のModel／Folder階層を維持します。旧版の受け皿Collectionは内容をScene直下へ安全に展開して除去します。
+- 旧JSON Importも`Generated Parts`／`Studio Only`を作らず、documentのModel直下へPartを配置します。
+- CSG適用失敗時に空の`Roblox CSG Operands` Collectionを残しません。
 - Base Color／EmissiveのsRGB往復、`MeshPart.TextureID`と`SurfaceAppearance`のTintおよび元の表現形式を維持します。
 - 同期済みオブジェクトを`Shift+D`で複製したとき、複製側へ新しい同期GUIDを割り当て、元オブジェクトを誤更新しません。
 - 深い親階層で蓄積した微小な行列誤差をShearとして誤検出しないようにし、実際のShearは引き続き停止します。
@@ -15,8 +17,8 @@ Primitive Syncに加えて、共有Mesh ID、双方向Mesh Sync、Roblox Materia
 
 [GitHub Releases](https://github.com/tappy3d-hue/blender-roblox-mesh-sync/releases/latest)から、次の2ファイルをダウンロードします。ソースコードをZIPにする必要はありません。
 
-- `RobloxPrimitiveSync-Blender-0.11.2.zip` — Blender 4.2以降用Extension
-- `RobloxPrimitiveSync-Studio-0.11.2.rbxm` — Roblox Studio用ローカルプラグイン
+- `RobloxPrimitiveSync-Blender-0.11.3.zip` — Blender 4.2以降用Extension
+- `RobloxPrimitiveSync-Studio-0.11.3.rbxm` — Roblox Studio用ローカルプラグイン
 
 ### Blender
 

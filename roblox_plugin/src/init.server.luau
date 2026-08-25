@@ -316,22 +316,14 @@ end
 
 local function buildModel(document)
 	local model = Instance.new("Model")
-	model.Name = `BlenderSync_{document.modelName}`
+	model.Name = document.modelName
 	model:SetAttribute("GeneratedByBlenderSync", true)
 	model:SetAttribute("BlenderModelId", document.modelId)
 	model:SetAttribute("BlenderSchema", SCHEMA_ID)
 
-	local generatedFolder = Instance.new("Folder")
-	generatedFolder.Name = "Generated Parts"
-	generatedFolder.Parent = model
-
-	local studioOnlyFolder = Instance.new("Folder")
-	studioOnlyFolder.Name = "Studio Only"
-	studioOnlyFolder.Parent = model
-
 	local groupedModels = {}
 	for _, data: ParsedPart in document.parts do
-		local parent: Instance = generatedFolder
+		local parent: Instance = model
 		if data.groupId and data.groupType == "Tube" then
 			local group = groupedModels[data.groupId]
 			if not group then
@@ -341,7 +333,7 @@ local function buildModel(document)
 				group:SetAttribute("BlenderObjectId", data.groupId)
 				group:SetAttribute("BlenderModelId", document.modelId)
 				group:SetAttribute("BlenderPartType", "Tube")
-				group.Parent = generatedFolder
+				group.Parent = model
 				groupedModels[data.groupId] = group
 			end
 			parent = group
